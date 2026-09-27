@@ -31,6 +31,8 @@ jobs:
         run: python3 tests/test_profiles.py
       - name: Проверить диагностику и отсутствие секретов в отчёте
         run: python3 tests/test_diagnose.py
+      - name: Проверить импорт cookies, сохранение ключа и защиту файлов
+        run: python3 tests/test_cookies.py
   android-qr:
     runs-on: ubuntu-latest
     timeout-minutes: 8
