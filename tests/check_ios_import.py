@@ -62,6 +62,9 @@ for item in list {
         editor.nodeAddr = "stale-address"
     }
     editor.ingest(cfg)
+    require(editor.transportRaw == (item["kind"] as! String), label + ": wrong transport mapping")
+    let importedURL = editor.transport == .yandex ? editor.url1 : editor.single
+    require(importedURL == (item["url"] as! String), label + ": wrong document/address")
     if original {
         require(editor.encryptionKey.isEmpty && editor.directKey == cfg.secret,
                 label + ": expected to reproduce the wrong key-slot bug")
@@ -123,14 +126,16 @@ def main():
                     cfg = json.loads(zlib.decompress(base64.urlsafe_b64decode(packed + '=' * (-len(packed) % 4)), -15))
                     key = (stage / 'config/secret.txt').read_text().strip()
                     cases.append(dict(label=mode + '/' + transport, reproduce=True,
-                                      config=cfg, main=key, direct='', address=''))
+                                      config=cfg, main=key, direct='', address='',
+                                      kind='volga' if transport == 'vyandex' else transport,
+                                      url=cfg['transports'][0]['url']))
         finally:
             fixture.doCleanups()
         dummy = 'test-only-shared-secret-not-for-use'
         cases += [
-            dict(label='direct-only', reproduce=False, config=dict(secret=dummy, transports=[dict(type='direct', dial='192.0.2.10:9443')]), main=dummy, direct='', address=''),
-            dict(label='docs-with-direct', reproduce=False, config=dict(secret=dummy, transports=[dict(type='yandex', url='https://example.invalid/doc'), dict(type='direct', dial='192.0.2.10:9443')]), main='', direct=dummy, address='192.0.2.10:9443'),
-            dict(label='no-secret-clears-stale-slots', reproduce=False, config=dict(transports=[dict(type='yandex', url='https://example.invalid/doc')]), main='', direct='', address=''),
+            dict(label='direct-only', reproduce=False, config=dict(secret=dummy, transports=[dict(type='direct', dial='192.0.2.10:9443')]), main=dummy, direct='', address='', kind='direct', url='192.0.2.10:9443'),
+            dict(label='docs-with-direct', reproduce=False, config=dict(secret=dummy, transports=[dict(type='yandex', url='https://example.invalid/doc'), dict(type='direct', dial='192.0.2.10:9443')]), main='', direct=dummy, address='192.0.2.10:9443', kind='yandex', url='https://example.invalid/doc'),
+            dict(label='no-secret-clears-stale-slots', reproduce=False, config=dict(transports=[dict(type='yandex', url='https://example.invalid/doc')]), main='', direct='', address='', kind='yandex', url='https://example.invalid/doc'),
         ]
         case_path = root / 'test-cases.json'
         case_path.write_text(json.dumps(cases))

@@ -40,12 +40,15 @@ class Profiles(unittest.TestCase):
         mock_bin.mkdir()
         qr = mock_bin / "qrencode"
         qr.write_text("""#!/usr/bin/env python3
-import pathlib, sys
-assert sys.stdin.read().startswith('openflux://v1/')
+import os, pathlib, sys
+link = sys.stdin.read()
+assert link.startswith('openflux://v1/')
+pathlib.Path(os.environ['QR_INPUT_CAPTURE']).write_text(link)
 pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'mock QR image')
 """)
         qr.chmod(0o755)
-        self.env = dict(os.environ, PATH=str(mock_bin) + ":" + os.environ["PATH"])
+        self.env = dict(os.environ, PATH=str(mock_bin) + ":" + os.environ["PATH"],
+                        QR_INPUT_CAPTURE=str(self.root / 'qr-input.txt'))
 
     def shell(self, code, *args, input_text=None):
         return subprocess.run(
@@ -55,12 +58,12 @@ pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'mock QR image')
             timeout=20,
         )
 
-    def render(self, mode, transport="yandex", fail=False):
+    def render(self, mode, transport="yandex", fail=False, url=URL):
         stage = Path(tempfile.mkdtemp(prefix="stage-", dir=self.root))
         result = self.shell(
             'WORK="$1"; DOC_URL="$2"; TRANSPORT="$3"; PROFILE_MODE="$4"; '
             'set_profile_options; write_config; write_client',
-            stage, URL, transport, mode,
+            stage, url, transport, mode,
         )
         if fail:
             self.assertNotEqual(result.returncode, 0)
@@ -69,35 +72,40 @@ pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'mock QR image')
             self.assertEqual(result.returncode, 0, result.stderr)
         return stage
 
-    def verify(self, stage, mode, transport):
+    def verify(self, stage, mode, transport, url=URL):
         cfg = stage / "config"
         key = (cfg / "secret.txt").read_text().strip()
         self.assertRegex(key, r"^[0-9a-f]{64}$")
         self.assertEqual((cfg / ".profile-mode").read_text().strip(), mode)
         link = (cfg / "connection.txt").read_text().strip()
+        self.assertEqual((self.root / 'qr-input.txt').read_text().strip(), link)
         packed = link.removeprefix("openflux://v1/")
         data = zlib.decompress(base64.urlsafe_b64decode(packed + "=" * (-len(packed) % 4)), -15)
         profile = json.loads(data)
         self.assertEqual(profile["secret"], key)
-        self.assertEqual(profile["context"], URL)
+        self.assertEqual(profile["context"], url)
         self.assertIs(profile["negotiate"], mode == "session")
-        self.assertEqual(profile["transports"], [{"type": transport, "url": URL, "priority": 100}])
+        self.assertEqual(profile["transports"], [{"type": transport, "url": url, "priority": 100}])
         codec = "legacy" if mode == "ios" else "batched"
         self.assertEqual(profile['codec'], codec)
         server = (cfg / "server.conf").read_text()
         unit = (stage / "openflux.service").read_text()
         self.assertIn(f"EncryptionKeyFile = {self.config}/secret.txt", server)
         self.assertIn(f"Codec = {codec}\n", server)
-        self.assertIn(f"URL = {URL}\n", server)
+        self.assertIn(f"URL = {url}\n", server)
+        self.assertIn(f"Transport = {transport}\n", server)
+        self.assertIn('Role = exit\nMode = l4\n', server)
         self.assertIn(f"--encryption-key-file={self.config}/secret.txt", unit)
         self.assertNotIn(key, unit)
         with zipfile.ZipFile(cfg / "client.zip") as archive:
             self.assertEqual(archive.read("secret.txt"), (cfg / "secret.txt").read_bytes())
             self.assertEqual(archive.read("connection.txt"), (cfg / "connection.txt").read_bytes())
+            self.assertEqual(archive.read("connection.png"), (cfg / "connection.png").read_bytes())
             client = archive.read("client.conf").decode()
             self.assertIn("EncryptionKeyFile = secret.txt", client)
             self.assertIn(f"Codec = {codec}\n", client)
-            self.assertIn(f"URL = {URL}\n", client)
+            self.assertIn(f"URL = {url}\n", client)
+            self.assertIn(f"Transport = {transport}\n", client)
             windows = archive.read("start-openflux.cmd").decode()
             linux = archive.read("start-openflux.sh").decode()
             self.assertIn("\r\n", windows)
@@ -108,7 +116,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'mock QR image')
                     self.assertNotIn("--transports", launcher)
                 else:
                     self.assertIn("--negotiate", launcher)
-                    self.assertIn(f"--transports={transport}:100 --{transport}-url={URL}", launcher)
+                    self.assertIn(f"--transports={transport}:100 --{transport}-url={url}", launcher)
             check = subprocess.run(["bash", "-n"], input=linux, text=True, capture_output=True)
             self.assertEqual(check.returncode, 0, check.stderr)
         return key
