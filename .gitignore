@@ -1,0 +1,22 @@
+# Автор установщика: Илья Рублев
+# https://t.me/Rublev_YouTube
+# https://boosty.to/rublev13
+# https://www.youtube.com/@Ilya_Rublev
+secret.txt
+client.txt
+client.conf
+client.zip
+server.conf
+cookies*.json
+connection.txt
+connection.png
+*.key
+*.pem
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc

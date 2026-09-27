@@ -1,0 +1,29 @@
+# Автор установщика: Илья Рублев
+# https://t.me/Rublev_YouTube
+# https://boosty.to/rublev13
+# https://www.youtube.com/@Ilya_Rublev
+name: Проверка установщика
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Проверить синтаксис Bash
+        run: bash -n openflux-install.sh
+      - name: Проверить встроенный Python
+        run: python3 tests/check_embedded_python.py
+      - name: Проверить справку без установки
+        run: bash openflux-install.sh --help

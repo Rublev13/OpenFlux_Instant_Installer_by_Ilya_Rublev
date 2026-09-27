@@ -1,0 +1,9 @@
+# Автор установщика: Илья Рублев
+# https://t.me/Rublev_YouTube
+# https://boosty.to/rublev13
+# https://www.youtube.com/@Ilya_Rublev
+* text=auto
+*.sh text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
