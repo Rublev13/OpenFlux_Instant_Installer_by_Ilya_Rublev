@@ -29,6 +29,22 @@ jobs:
         run: bash openflux-install.sh --help
       - name: Проверить шифрование и профили Android/ПК и iPhone
         run: python3 tests/test_profiles.py
+      - name: Проверить диагностику и отсутствие секретов в отчёте
+        run: python3 tests/test_diagnose.py
+  android-qr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Подготовить проверку QR в среде CI
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qrencode zbar-tools
+      - name: Прочитать реальные PNG и проверить их Android-декодером
+        run: python3 tests/check_android_qr.py
   editors:
     name: Editor ${{ matrix.transport }}
     runs-on: ubuntu-latest

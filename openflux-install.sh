@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenFlux_Instant_Installer by_Ilya_Rublev 1.1.1 — автор установщика: Илья Рублев.
+# OpenFlux_Instant_Installer by_Ilya_Rublev 1.1.2 — автор установщика: Илья Рублев.
 # Copyright (C) 2026 Илья Рублев
 # License: GNU General Public License version 3; see LICENSE.
 # Telegram: https://t.me/Rublev_YouTube
@@ -15,7 +15,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION='1.1.1'
+readonly INSTALLER_VERSION='1.1.2'
 readonly OPENFLUX_VERSION='0.0.5'
 readonly UPSTREAM='https://github.com/p1neappleXpress/OpenFlux'
 readonly OWNER_TAG='rublev-openflux-installer-v1'
@@ -94,6 +94,7 @@ Android/ПК: L4, batched, negotiate. iPhone: L4, legacy, без negotiate.
 Скрипт определяет редактор по странице; если не удалось — спрашивает его.
 Служба active ещё не означает, что клиент уже соединился с VPS.
 Android: damnurmum/OpenFlux-Android v1.1.1, «Профили» → кнопка QR.
+Другой клиент p1neappleXpress/OpenFluxAndroid 0.0.2 этот QR не поддерживает.
 iPhone: https://testflight.apple.com/join/BwnAcdus
 Выберите режим iPhone. Нужна сборка с шифрованием AES-256-GCM.
 В проверенной ветке ios-testflight есть импорт ссылки/QR, но нет Session.
@@ -463,6 +464,8 @@ negotiate / Session: $SESSION_LABEL
 Профиль с ключом: $CONFIG_DIR/client.zip — скачайте через SFTP на свой ПК.
 Одна активная клиентская сессия. Выход — через этот VPS.
 Android: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1
+Не путайте с p1neappleXpress/OpenFluxAndroid 0.0.2: у него другой формат QR
+и нет настройки ключа AES-256-GCM. Для этой установки нужен клиент выше.
 В приложении: «Профили» → кнопка QR → отсканируйте код с экрана VPS.
 Можно открыть ссылку openflux://v1/… на телефоне с установленным приложением.
 Ссылка и QR содержат ключ. Не публикуйте их и не показывайте в видео.
@@ -561,6 +564,7 @@ show_qr() {
     [[ -s $CONFIG_DIR/connection.txt ]] || fail 'Ссылка ещё не создана. Запустите пункт 1 для перенастройки.'
     step 'Подключение OpenFlux / AES-256-GCM'
     say 'Клиент: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1'
+    warn 'p1neappleXpress/OpenFluxAndroid 0.0.2 не понимает этот формат QR и ключа.'
     say 'iPhone: https://testflight.apple.com/join/BwnAcdus (на VPS нужен режим iPhone)'
     say 'Откройте «Профили» → кнопку QR, отсканируйте код, сохраните профиль.'
     warn 'Ссылка и QR содержат ключ доступа. Не публикуйте их.'
@@ -775,6 +779,7 @@ try:
     parser = configparser.ConfigParser(interpolation=None)
     parser.read_string((root / 'server.conf').read_text())
     cfg = parser['Interface']
+    require(cfg.get('Transport') in ('yandex', 'vyandex'), 'неизвестный транспорт в конфигурации.')
     require(cfg.get('EncryptionKeyFile') == str(root / 'secret.txt'), 'сервер использует другой файл ключа.')
     require(cfg.get('Codec') == codec, 'кодек сервера не совпадает с режимом.')
     link = (root / 'connection.txt').read_text().strip()
@@ -800,6 +805,7 @@ except (OSError, ValueError, KeyError, TypeError, AttributeError, configparser.E
     require(False, 'не удалось прочитать конфигурацию или профиль. Повторите настройку.')
 print('OK: ключ VPS и ссылки совпадают; AES-256-GCM настроено.')
 print('OK: документ, транспорт, контекст, кодек и режим службы совпадают.')
+print('Режим: ' + mode + '; кодек: ' + codec + '; транспорт: ' + cfg.get('Transport'))
 print('Ключ и ссылка не выведены. Это проверка файлов, не полного соединения с телефоном.')
 PY
 }
