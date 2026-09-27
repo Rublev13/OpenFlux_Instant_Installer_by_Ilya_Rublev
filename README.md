@@ -34,17 +34,17 @@
 
 ## Быстрый запуск
 
-Войдите на VPS по SSH под `root`. Для обычного пользователя с административными правами сначала выполните `sudo -i`. Поддерживаются Ubuntu 22.04/24.04 и Debian 12/13, amd64/arm64, systemd. Для зарубежного выхода нужен зарубежный VPS.
+Войдите на VPS по SSH под `root` или пользователем с правами `sudo`. Команда сама запросит административные права, если они нужны; может потребоваться пароль пользователя. Поддерживаются Ubuntu 22.04/24.04 и Debian 12/13, amd64/arm64, systemd. Для зарубежного выхода нужен зарубежный VPS.
 
 Скопируйте команду целиком:
 
 ```bash
-bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните sudo -i"; exit 1; }; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh" --install'
+bash -c 'set -e; if [ "$EUID" -ne 0 ]; then exec sudo bash -c "$BASH_EXECUTION_STRING"; fi; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh" --install'
 ```
 
 Установка начнётся сразу. Вставьте публичную ссылку на Яндекс.Документ с доступом на редактирование вида `https://disk.yandex.ru/i/ИДЕНТИФИКАТОР`. Скрипт установит зависимости и OpenFlux, настроит автозапуск и покажет ссылку подключения с QR-кодом. Если редактор не определится автоматически, появится выбор редактора.
 
-После установки меню управления доступно командой `openflux-setup`. Полный исходник: [openflux-install.sh](openflux-install.sh).
+После установки меню управления доступно командой `openflux-setup` под root или `sudo openflux-setup` под обычным пользователем. Полный исходник: [openflux-install.sh](openflux-install.sh).
 
 # OpenFlux_Instant_Installer by_Ilya_Rublev
 
@@ -107,7 +107,7 @@ bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните
 | ОС сервера | Ubuntu 22.04 или 24.04; Debian 12 или 13 |
 | Архитектура | `amd64` или `arm64` |
 | Управление службами | Работающий `systemd` |
-| Доступ к серверу | SSH и права `root` либо возможность выполнить `sudo -i` |
+| Доступ к серверу | SSH и права `root` либо административные права через `sudo` |
 | Доступ в интернет | Репозитории ОС, GitHub, Яндекс и необходимые конечные ресурсы |
 | Документ | Отдельный документ с доступом на редактирование по публичной ссылке |
 | Клиентское устройство | Совместимый Android-клиент либо клиент OpenFlux на компьютере |
@@ -126,12 +126,12 @@ https://disk.yandex.ru/i/ИДЕНТИФИКАТОР
 
 ## Установка одной командой
 
-Войдите на VPS по SSH под `root`. Если работаете под обычным пользователем с административными правами, сначала выполните `sudo -i`.
+Войдите на VPS по SSH под `root` или пользователем с правами `sudo`. Команда сама запросит административные права через `sudo`, если они нужны.
 
 Скопируйте всю строку:
 
 ```bash
-bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните sudo -i"; exit 1; }; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh" --install'
+bash -c 'set -e; if [ "$EUID" -ne 0 ]; then exec sudo bash -c "$BASH_EXECUTION_STRING"; fi; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh" --install'
 ```
 
 Команда при необходимости установит `curl` и сертификаты, скачает скрипт во временный каталог и сразу запустит установку. Файл будет полностью загружен до начала исполнения. Временная копия удалится при завершении команды.
@@ -163,7 +163,7 @@ openflux-setup
 | 3 | Показать QR-код и ссылку подключения |
 | 0 | Выйти |
 
-Все команды управления сервером в этой инструкции приведены для сессии `root`.
+Команды управления сервером ниже приведены для сессии `root`. Если работаете под обычным пользователем, добавляйте перед ними `sudo`.
 
 ## Подключение с Android
 
