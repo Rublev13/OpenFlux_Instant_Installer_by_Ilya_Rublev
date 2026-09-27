@@ -32,15 +32,29 @@
 
 Автор установщика: **Илья Рублев**. [Telegram](https://t.me/Rublev_YouTube) · [YouTube](https://www.youtube.com/@Ilya_Rublev) · [Boosty](https://boosty.to/rublev13).
 
+## Быстрый запуск
+
+Войдите на VPS по SSH под `root`. Для обычного пользователя с административными правами сначала выполните `sudo -i`. Поддерживаются Ubuntu 22.04/24.04 и Debian 12/13, amd64/arm64, systemd. Для зарубежного выхода нужен зарубежный VPS.
+
+Скопируйте команду целиком:
+
+```bash
+bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните sudo -i"; exit 1; }; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh" --install'
+```
+
+Установка начнётся сразу. Вставьте публичную ссылку на Яндекс.Документ с доступом на редактирование вида `https://disk.yandex.ru/i/ИДЕНТИФИКАТОР`. Скрипт установит зависимости и OpenFlux, настроит автозапуск и покажет ссылку подключения с QR-кодом. Если редактор не определится автоматически, появится выбор редактора.
+
+После установки меню управления доступно командой `openflux-setup`. Полный исходник: [openflux-install.sh](openflux-install.sh).
+
 # OpenFlux_Instant_Installer by_Ilya_Rublev
 
-Установщик OpenFlux для собственного Linux VPS. Одна команда открывает меню, после чего остаётся выбрать установку и вставить публичную ссылку на отдельный документ Яндекса. Скрипт скачает закреплённую версию OpenFlux, создаст ключ, подготовит службу автозапуска и выдаст настройки подключения.
+Установщик OpenFlux для собственного Linux VPS. Одна команда запускает установку, после чего остаётся вставить публичную ссылку на отдельный документ Яндекса. Скрипт скачает закреплённую версию OpenFlux, создаст ключ, подготовит службу автозапуска и выдаст настройки подключения.
 
 **Автор установщика:** [Илья Рублев](https://t.me/Rublev_YouTube).
 
 [![Проверка установщика](https://github.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/actions/workflows/check.yml/badge.svg)](https://github.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/actions/workflows/check.yml)
 
-**Статус:** предварительная версия для закрытого тестирования. Проверка полного соединения на VPS ещё не проведена.
+**Статус:** предварительная версия. Проверка полного соединения на VPS ещё не проведена.
 
 [Telegram](https://t.me/Rublev_YouTube) · [YouTube](https://www.youtube.com/@Ilya_Rublev) · [Boosty](https://boosty.to/rublev13) · [Исходный проект OpenFlux](https://github.com/p1neappleXpress/OpenFlux)
 
@@ -112,26 +126,21 @@ https://disk.yandex.ru/i/ИДЕНТИФИКАТОР
 
 ## Установка одной командой
 
-**Закрытое тестирование:** пока репозиторий приватный, команда ниже без авторизации не скачает файл. Откройте [openflux-install.sh](openflux-install.sh) в GitHub под своим аккаунтом, скачайте файл через кнопку **Download raw file** и перенесите его на VPS по SFTP. В каталоге с файлом выполните `sudo bash openflux-install.sh`. Подробный порядок и проверка соединения: [TESTING.md](TESTING.md).
-
-**После открытия репозитория:** используйте следующую команду без подстановок.
-
 Войдите на VPS по SSH под `root`. Если работаете под обычным пользователем с административными правами, сначала выполните `sudo -i`.
 
 Скопируйте всю строку:
 
 ```bash
-bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните sudo -i"; exit 1; }; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh"'
+bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните sudo -i"; exit 1; }; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh" --install'
 ```
 
-Команда при необходимости установит `curl` и сертификаты, скачает скрипт во временный каталог и откроет его меню. Файл будет полностью загружен до начала исполнения. Временная копия удалится при завершении команды.
+Команда при необходимости установит `curl` и сертификаты, скачает скрипт во временный каталог и сразу запустит установку. Файл будет полностью загружен до начала исполнения. Временная копия удалится при завершении команды.
 
 Дальше нужно:
 
-1. Выбрать **1. Установить / перенастроить OpenFlux**.
-2. Вставить публичную ссылку на документ.
-3. Дождаться определения редактора. Если оно не сработало, выбрать старый или новый редактор вручную либо отменить установку.
-4. Дождаться запуска службы и появления параметров подключения.
+1. Вставить публичную ссылку на документ.
+2. Дождаться определения редактора. Если оно не сработало, выбрать старый или новый редактор вручную либо отменить установку.
+3. Дождаться запуска службы и появления параметров подключения.
 
 Скрипт устанавливает **OpenFlux 0.0.5**. Версия закреплена вместе с контрольными суммами. Автоматического перехода на любой новый релиз здесь нет.
 
@@ -286,13 +295,3 @@ GitHub Actions при каждом push и pull request проверяет си�
 - [Boosty: Илья Рублев](https://boosty.to/rublev13)
 
 Сообщение об ошибке должно содержать версию ОС, архитектуру, выбранный транспорт и описание того, на каком шаге возникла проблема. Ключи, QR-коды, рабочие ссылки подключения и cookies публиковать не нужно. Подробности о передаче диагностических данных находятся в [SECURITY.md](SECURITY.md).
-
-## Быстрый запуск
-
-Перед первой установкой прочитайте отказ от ответственности в начале страницы. Команда ниже работает без авторизации после открытия репозитория. Для закрытого тестирования скачайте файл из GitHub и выполните шаги из [TESTING.md](TESTING.md).
-
-```bash
-bash -c 'set -e; test "$EUID" -eq 0 || { echo "Сначала выполните sudo -i"; exit 1; }; if ! command -v curl >/dev/null; then apt-get update; apt-get install -y ca-certificates curl; fi; of_tmp=$(mktemp -d); trap "rm -rf -- \"$of_tmp\"" EXIT; curl --proto "=https" --proto-redir "=https" -fsSL --connect-timeout 15 --max-time 180 "https://raw.githubusercontent.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/main/openflux-install.sh" -o "$of_tmp/openflux-install.sh"; bash "$of_tmp/openflux-install.sh"'
-```
-
-После установки: `openflux-setup`. Полный исходник установщика: [openflux-install.sh](openflux-install.sh).
