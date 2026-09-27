@@ -32,6 +32,9 @@ class Profiles(unittest.TestCase):
         self.script.write_text(SOURCE.read_text().replace(
             "readonly CONFIG_DIR='/etc/openflux'",
             f"readonly CONFIG_DIR='{self.config}'",
+        ).replace(
+            "readonly UNIT='/etc/systemd/system/openflux.service'",
+            f"readonly UNIT='{self.root / 'openflux.service'}'",
         ))
         mock_bin = self.root / "mock-bin"
         mock_bin.mkdir()
@@ -80,6 +83,7 @@ pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'mock QR image')
         self.assertIs(profile["negotiate"], mode == "session")
         self.assertEqual(profile["transports"], [{"type": transport, "url": URL, "priority": 100}])
         codec = "legacy" if mode == "ios" else "batched"
+        self.assertEqual(profile['codec'], codec)
         server = (cfg / "server.conf").read_text()
         unit = (stage / "openflux.service").read_text()
         self.assertIn(f"EncryptionKeyFile = {self.config}/secret.txt", server)
@@ -148,6 +152,32 @@ pathlib.Path(sys.argv[sys.argv.index('-o') + 1]).write_bytes(b'mock QR image')
         key.symlink_to(target)
         self.render("session", fail=True)
         self.assertEqual(target.read_text(), "a" * 64)
+
+    def test_diagnostic_checks_key_and_codec_without_exposing_them(self):
+        for mode in ('session', 'ios'):
+            with self.subTest(mode=mode):
+                stage = self.render(mode)
+                shutil.copytree(stage / 'config', self.config, dirs_exist_ok=True)
+                shutil.copyfile(stage / 'openflux.service', self.root / 'openflux.service')
+                result = self.shell('need_root() { :; }; check_profile')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                key = (self.config / 'secret.txt').read_text().strip()
+                self.assertNotIn(key, result.stdout + result.stderr)
+                self.assertNotIn(URL, result.stdout + result.stderr)
+                link_path = self.config / 'connection.txt'
+                original_link = link_path.read_text()
+                encoded = original_link.strip().removeprefix('openflux://v1/')
+                profile = json.loads(zlib.decompress(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)), -15))
+                for field, bad_value in [('secret', 'f' * 64), ('codec', 'wrong'), ('negotiate', mode != 'session')]:
+                    bad = dict(profile, **{field: bad_value})
+                    encoder = zlib.compressobj(wbits=-15)
+                    packed = encoder.compress(json.dumps(bad).encode()) + encoder.flush()
+                    link_path.write_text('openflux://v1/' + base64.urlsafe_b64encode(packed).decode().rstrip('=') + '\n')
+                    result = self.shell('need_root() { :; }; check_profile')
+                    self.assertNotEqual(result.returncode, 0, field)
+                    self.assertNotIn(key, result.stdout + result.stderr)
+                    self.assertNotIn(URL, result.stdout + result.stderr)
+                link_path.write_text(original_link)
 
 
 if __name__ == "__main__":

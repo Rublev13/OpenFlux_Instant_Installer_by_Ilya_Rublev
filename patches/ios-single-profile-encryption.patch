@@ -1,0 +1,23 @@
+--- a/ios-app/OpenFlux/ContentView.swift
++++ b/ios-app/OpenFlux/ContentView.swift
+@@ -905,12 +905,14 @@
+             case .max: break
+             }
+         }
+-        if let s = cfg.secret, !s.isEmpty {
+-            if transport == .direct { encryptionKey = s } else { directKey = s }
+-        }
+-        if let d = cfg.directDial, transport != .direct {
+-            nodeAddr = d
+-        }
++        // A document-only link encrypts the document transport itself.
++        // Keep the same key-slot mapping as ShareImporter.build(from:).
++        let secret = cfg.secret ?? ""
++        let dial = cfg.directDial ?? ""
++        let hasDirectChannel = transport != .direct && !dial.isEmpty
++        encryptionKey = hasDirectChannel ? "" : secret
++        directKey = hasDirectChannel ? secret : ""
++        nodeAddr = hasDirectChannel ? dial : ""
+         if name.trimmingCharacters(in: .whitespaces).isEmpty {
+             name = cfg.name ?? transport.title
+         }

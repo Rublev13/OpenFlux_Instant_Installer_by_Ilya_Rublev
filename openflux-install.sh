@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenFlux_Instant_Installer by_Ilya_Rublev 1.1.0 — автор установщика: Илья Рублев.
+# OpenFlux_Instant_Installer by_Ilya_Rublev 1.1.1 — автор установщика: Илья Рублев.
 # Copyright (C) 2026 Илья Рублев
 # License: GNU General Public License version 3; see LICENSE.
 # Telegram: https://t.me/Rublev_YouTube
@@ -15,7 +15,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION='1.1.0'
+readonly INSTALLER_VERSION='1.1.1'
 readonly OPENFLUX_VERSION='0.0.5'
 readonly UPSTREAM='https://github.com/p1neappleXpress/OpenFlux'
 readonly OWNER_TAG='rublev-openflux-installer-v1'
@@ -80,6 +80,7 @@ help_text() {
   --logs       Последние 60 строк журнала OpenFlux.
   --client     Показать параметры клиента, включая секретный ключ.
   --key        Показать только текущий ключ шифрования.
+  --check      Проверить ключ, конфигурацию и ссылку, не показывая секрет.
   --qr         Показать ссылку openflux://v1/ и QR-код выбранного режима.
   --help       Эта справка. Ничего не устанавливает.
 
@@ -471,6 +472,11 @@ iPhone: https://testflight.apple.com/join/BwnAcdus
 На VPS выберите режим iPhone (ios): legacy без negotiate.
 В проверенной ветке ios-testflight есть импорт openflux:// и QR.
 После импорта проверьте AES-256-GCM и общий секрет в настройках профиля.
+В проверенной iOS-ветке импорт одного профиля ошибочно заполняет «Ключ
+прямого канала». Если «Общий секрет» пуст, перенесите ключ в поле
+«Шифрование (AES-256-GCM) → Общий секрет», очистите ненужный ключ
+прямого канала, сохраните профиль и переподключитесь.
+На iPhone новый ключ не создаётся: используется тот же секрет, что на VPS.
 Если импорта нет, введите ссылку, транспорт и секрет выше вручную.
 Для vyandex в iOS может использоваться название VOLGA / Волга.
 Ключ и ссылка должны совпадать с сервером без изменений.
@@ -536,6 +542,7 @@ if mode not in ('session', 'ios'):
 profile = {
     'name': 'OpenFlux_Instant_Installer by_Ilya_Rublev',
     'negotiate': mode == 'session',
+    'codec': 'legacy' if mode == 'ios' else 'batched',
     'secret': key,
     'context': url,
     'transports': [{'type': transport, 'url': url, 'priority': 100}],
@@ -567,6 +574,12 @@ show_qr() {
     say 'Если QR переносится на новую строку, расширьте окно терминала или откройте PNG.'
     say 'Параметры выбранного режима: sudo openflux-setup --client'
     say 'Показать только ключ шифрования: sudo openflux-setup --key'
+    if [[ -f $CONFIG_DIR/.profile-mode ]] && [[ $(cat "$CONFIG_DIR/.profile-mode") == ios ]]; then
+        warn 'iPhone: после импорта откройте «Изменить профиль» → «Шифрование (AES-256-GCM)».'
+        say 'Если «Общий секрет» пуст, перенесите туда ключ из «Ключ прямого канала»'
+        say 'или из вывода sudo openflux-setup --key. Очистите ненужный ключ прямого канала.'
+        say 'Сохраните профиль, откройте снова и убедитесь, что секрет сохранился.'
+    fi
     warn 'Совместимость с конкретной сборкой TestFlight требует проверки на телефоне.'
 }
 account_matches() {
@@ -743,6 +756,53 @@ show_key() {
     validate_key "$CONFIG_DIR/secret.txt"
     cat "$CONFIG_DIR/secret.txt"
 }
+check_profile() {
+    need_root
+    owned || fail 'Установка этого скрипта не найдена.'
+    validate_key "$CONFIG_DIR/secret.txt"
+    python3 - "$CONFIG_DIR" "$UNIT" <<'PY'
+import base64, configparser, json, pathlib, shlex, sys, zlib
+root, unit_path = map(pathlib.Path, sys.argv[1:])
+def require(condition, message):
+    if not condition:
+        print('Ошибка проверки: ' + message, file=sys.stderr)
+        raise SystemExit(1)
+try:
+    key = (root / 'secret.txt').read_text().strip()
+    mode = (root / '.profile-mode').read_text().strip()
+    require(mode in ('ios', 'session'), 'неизвестный режим. Повторите настройку.')
+    codec = 'legacy' if mode == 'ios' else 'batched'
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string((root / 'server.conf').read_text())
+    cfg = parser['Interface']
+    require(cfg.get('EncryptionKeyFile') == str(root / 'secret.txt'), 'сервер использует другой файл ключа.')
+    require(cfg.get('Codec') == codec, 'кодек сервера не совпадает с режимом.')
+    link = (root / 'connection.txt').read_text().strip()
+    require(link.startswith('openflux://v1/') and len(link) < 32768, 'некорректная ссылка подключения.')
+    packed = link[len('openflux://v1/'):]
+    decoder = zlib.decompressobj(-15)
+    raw = decoder.decompress(base64.b64decode(packed + '=' * (-len(packed) % 4), altchars=b'-_', validate=True), 16385)
+    require(len(raw) <= 16384 and decoder.eof and not decoder.unused_data, 'повреждён профиль в ссылке.')
+    profile = json.loads(raw)
+    require(profile.get('secret') == key, 'ключ в ссылке отличается от ключа VPS. Перевыпустите профиль.')
+    require(profile.get('context') == cfg.get('URL'), 'контекст шифрования отличается от ссылки документа на VPS.')
+    require(profile.get('negotiate') is (mode == 'session'), 'режим ссылки отличается от сервера.')
+    require(profile.get('codec') == codec, 'кодек в ссылке отсутствует или отличается. Повторите настройку новым установщиком.')
+    require(profile.get('transports') == [{'type': cfg.get('Transport'), 'url': cfg.get('URL'), 'priority': 100}], 'транспорт или документ в ссылке отличается от VPS.')
+    starts = [s.removeprefix('ExecStart=') for s in unit_path.read_text().splitlines() if s.startswith('ExecStart=')]
+    require(len(starts) == 1, 'неоднозначный запуск службы.')
+    args = shlex.split(starts[0])
+    require('--encryption-key-file=' + str(root / 'secret.txt') in args, 'в запуске службы отсутствует обязательный ключ.')
+    require(('--negotiate' in args) == (mode == 'session'), 'negotiate службы отличается от профиля.')
+    if mode == 'ios':
+        require(not any(s.startswith('--transports=') for s in args), 'режим iPhone не должен включать Session.')
+except (OSError, ValueError, KeyError, TypeError, AttributeError, configparser.Error, zlib.error):
+    require(False, 'не удалось прочитать конфигурацию или профиль. Повторите настройку.')
+print('OK: ключ VPS и ссылки совпадают; AES-256-GCM настроено.')
+print('OK: документ, транспорт, контекст, кодек и режим службы совпадают.')
+print('Ключ и ссылка не выведены. Это проверка файлов, не полного соединения с телефоном.')
+PY
+}
 show_logs() {
     need_root
     owned || fail 'Установка этого скрипта не найдена.'
@@ -768,6 +828,7 @@ main() {
         --logs) show_logs ;;
         --client) show_client ;;
         --key) show_key ;;
+        --check) check_profile ;;
         --qr) show_qr ;;
         '')
             need_root
@@ -776,6 +837,7 @@ main() {
             say '  2. Полностью удалить OpenFlux'
             say '  3. Показать QR-код и ссылку подключения'
             say '  4. Показать ключ шифрования'
+            say '  5. Проверить ключ и профиль без вывода секрета'
             say '  0. Выход'
             say ''
             while :; do
@@ -785,8 +847,9 @@ main() {
                     2) uninstall_openflux; break ;;
                     3) show_qr; break ;;
                     4) show_key; break ;;
+                    5) check_profile; break ;;
                     0) break ;;
-                    *) warn 'Введите 1, 2, 3, 4 или 0.' ;;
+                    *) warn 'Введите 1, 2, 3, 4, 5 или 0.' ;;
                 esac
             done ;;
         *) fail "Неизвестный параметр: $action. Справка: --help" ;;
