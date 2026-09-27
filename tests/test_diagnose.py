@@ -109,6 +109,22 @@ class Diagnostics(unittest.TestCase):
         self.safe(diagnose.log_report(self.root))
         self.safe(diagnose.runtime_report(self.root, {}))
 
+    def test_volga_connection_and_last_start_failure(self):
+        path = self.root / "var/log/openflux/openflux.log"
+        path.parent.mkdir(parents=True)
+        path.write_text("2026/09/27 09:23:05 Failed to start transport: auth: yandex docs: captcha required "
+                        + self.url + "\n2026/09/27 09:24:00 [VOLGA] WS connected: user=" + self.cookie)
+        output = self.safe(diagnose.log_report(self.root))
+        self.assertIn("Соединение WebSocket открыто: 1", output)
+        self.assertIn("Последний отказ запуска транспорта: SmartCaptcha / требуется капча", output)
+        self.assertIn("Время отказа по журналу: 2026/09/27 09:23:05", output)
+        properties = {"NRestarts": "30", "ExecMainStatus": "1", "SubState": "auto-restart"}
+        output = self.safe(diagnose.runtime_report(self.root, properties))
+        self.assertIn("Автоперезапусков systemd: 30", output)
+        self.assertIn("Код завершения процесса: 1", output)
+        properties["NRestarts"] = self.key
+        self.safe(diagnose.runtime_report(self.root, properties))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

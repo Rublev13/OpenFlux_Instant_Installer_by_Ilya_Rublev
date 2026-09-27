@@ -117,6 +117,11 @@ def runtime_report(root, properties):
     out = ["Служба: " + enum(properties.get("ActiveState"),
                           ("active", "inactive", "failed", "activating", "deactivating")),
            "Переопределения systemd: " + yes(bool(properties.get("DropInPaths")))]
+    out.append("Подсостояние службы: " + enum(properties.get("SubState"),
+                                              ("running", "start", "auto-restart", "dead", "failed", "stop-sigterm")))
+    for prop, label in (("NRestarts", "Автоперезапусков systemd"), ("ExecMainStatus", "Код завершения процесса")):
+        value = properties.get(prop, "")
+        out.append(label + ": " + (value if re.fullmatch(r"[0-9]{1,12}", value) else "не определено"))
     pid = properties.get("MainPID", "")
     if not re.fullmatch(r"[1-9][0-9]{0,9}", pid):
         return out + ["Работающий процесс: не найден"]
@@ -163,11 +168,24 @@ def log_report(root):
         ("Нет маршрута / DNS / таймаут", r"no route to host|no such host|i/o timeout|TLS handshake timeout"),
         ("Шифрование выключено", r"encryption: off|шифрование.*отключено"),
         ("Включено AES-256-GCM", r"AES-256-GCM enabled|AES-256-GCM включено"),
-        ("Соединение WebSocket открыто", r"WebSocket connected"),
+        ("Соединение WebSocket открыто", r"WebSocket connected|\[VOLGA\] WS connected"),
     )
     for label, pattern in patterns:
         count = sum(bool(re.search(pattern, line, re.I)) for line in lines)
         out.append(label + ": " + str(count))
+    for line in reversed(lines):
+        if "Failed to start transport:" not in line:
+            continue
+        reason = "другая ошибка (исходная строка скрыта)"
+        for label, pattern in patterns[:7]:
+            if re.search(pattern, line, re.I):
+                reason = label
+                break
+        stamp = re.search(r"\b[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}", line)
+        out.append("Последний отказ запуска транспорта: " + reason)
+        if stamp:
+            out.append("Время отказа по журналу: " + stamp.group())
+        break
     for line in reversed(lines):
         if "[STATS]" in line:
             values = re.findall(r"\b(packets|connected|established|retrans)=([0-9]{1,18})(?![0-9])", line)
@@ -189,7 +207,7 @@ def main():
     properties = {}
     try:
         proc = subprocess.run(["systemctl", "show", "openflux.service", "--no-pager",
-                               "--property=ActiveState,MainPID,DropInPaths"],
+                               "--property=ActiveState,SubState,MainPID,DropInPaths,NRestarts,ExecMainStatus"],
                               capture_output=True, text=True, timeout=10)
         properties = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
     except (OSError, subprocess.SubprocessError):
