@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenFlux_Instant_Installer by_Ilya_Rublev 1.1.2 — автор установщика: Илья Рублев.
+# OpenFlux_Instant_Installer by_Ilya_Rublev 1.2.0 — автор установщика: Илья Рублев.
 # Copyright (C) 2026 Илья Рублев
 # License: GNU General Public License version 3; see LICENSE.
 # Telegram: https://t.me/Rublev_YouTube
@@ -15,8 +15,8 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION='1.1.2'
-readonly OPENFLUX_VERSION='0.0.5'
+readonly INSTALLER_VERSION='1.2.0'
+readonly OPENFLUX_VERSION='v0.1.0'
 readonly UPSTREAM='https://github.com/p1neappleXpress/OpenFlux'
 readonly OWNER_TAG='rublev-openflux-installer-v1'
 readonly CONFIG_DIR='/etc/openflux'
@@ -29,8 +29,8 @@ readonly ROTATE='/etc/logrotate.d/openflux'
 readonly SERVICE='openflux.service'
 readonly ACCOUNT='openflux-rublev'
 readonly MARKER="$CONFIG_DIR/.installer-owner"
-readonly LINUX_AMD64_SHA='8211dd5343dd4eac49fcd2838ffcb9e1912c14a0e878c735395967999b0573c5'
-readonly LINUX_ARM64_SHA='ffcc24b9c956517cb0b317a9fc7de5124c4bb29ebc9dafc837a84a55f6fcee7b'
+readonly LINUX_AMD64_SHA='fcc1db93e21a2d4f88e35ec642a54ce206fb9f611c4780b8d4857bbe2d58190a'
+readonly LINUX_ARM64_SHA='c2bfd8bd38e73bb75b6640b54eb582abb375de2b43af61574d3913fd9d2403be'
 
 WORK=''
 TRANSACTION=0
@@ -353,7 +353,7 @@ Type=simple
 User=$ACCOUNT
 Group=$ACCOUNT
 WorkingDirectory=$STATE_DIR
-ExecStart=$BIN --config=$CONFIG_DIR/server.conf --encryption-key-file=$CONFIG_DIR/secret.txt $SESSION_FLAGS
+ExecStart=$BIN --role=exit --config=$CONFIG_DIR/server.conf --encryption-key-file=$CONFIG_DIR/secret.txt $SESSION_FLAGS
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -424,7 +424,7 @@ if not exist "openflux.exe" (
   pause
   exit /b 1
 )
-"%~dp0openflux.exe" --config=client.conf --encryption-key-file=secret.txt __SESSION_FLAGS__
+"%~dp0openflux.exe" --role=client --config=client.conf --encryption-key-file=secret.txt __SESSION_FLAGS__
 pause
 CMD
     sed -i "s|__SESSION_FLAGS__|$SESSION_FLAGS|" "$WORK/client/start-openflux.cmd"
@@ -439,7 +439,7 @@ CMD
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 [[ -x ./openflux ]] || { echo 'Добавьте сюда официальный бинарник openflux и выполните chmod +x openflux.'; exit 1; }
-exec ./openflux --config=client.conf --encryption-key-file=secret.txt __SESSION_FLAGS__
+exec ./openflux --role=client --config=client.conf --encryption-key-file=secret.txt __SESSION_FLAGS__
 SH
     sed -i "s|__SESSION_FLAGS__|$SESSION_FLAGS|" "$WORK/client/start-openflux.sh"
     cat > "$WORK/config/client.txt" <<EOF
@@ -496,7 +496,7 @@ WINDOWS 10/11 x64
 2. Скачайте:
 $UPSTREAM/releases/download/$OPENFLUX_VERSION/openflux-windows-amd64.exe
 3. Переименуйте скачанный файл в openflux.exe и поместите в ту же папку.
-SHA-256: 665333ce7ba168c03121a70e7ef5c72ee61eefdaf5e753e728b2dd1009608e79
+SHA-256: c2d29100e194e0121d079f6419d22b8bec5490130f175ec98a0e59ef9eb06eaa
 4. Дважды нажмите start-openflux.cmd. Оставьте окно открытым.
 5. В Firefox: Настройки → Настройки сети → Настроить → Ручная настройка.
    SOCKS: 127.0.0.1, порт 1080, SOCKS v5; поля HTTP и HTTPS пустые.
@@ -533,7 +533,7 @@ PY
 }
 write_share() {
     # Формат upstream share/share.go: JSON → raw DEFLATE → base64url без padding.
-    # Не зависит от наличия --share в серверном бинарнике 0.0.5.
+    # Не зависит от наличия --share в серверном бинарнике.
     python3 - "$WORK/config/secret.txt" "$DOC_URL" "$TRANSPORT" "$WORK/config/connection.txt" "$PROFILE_MODE" <<'PY'
 import base64, json, pathlib, re, sys, zlib
 key_path, url, transport, out_path, mode = sys.argv[1:]

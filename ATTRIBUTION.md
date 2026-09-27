@@ -10,13 +10,13 @@
 
 Сетевое ядро разрабатывается в https://github.com/p1neappleXpress/OpenFlux.
 
-Установщик скачивает готовый бинарный файл версии 0.0.5 из релизов этого репозитория. В комплекте установщика нет бинарного файла OpenFlux. Его исходники доступны в исходном репозитории; соответствующая версия: https://github.com/p1neappleXpress/OpenFlux/tree/0.0.5.
+Установщик скачивает готовый бинарный файл версии v0.1.0 из релизов этого репозитория. В комплекте установщика нет бинарного файла OpenFlux. Его исходники доступны в исходном репозитории; соответствующая версия: https://github.com/p1neappleXpress/OpenFlux/tree/v0.1.0.
 
 В файле COPYRIGHT проекта указаны OpenFlux Contributors и GNU General Public License версии 3 или более поздней версии:
 
-- [COPYRIGHT](https://github.com/p1neappleXpress/OpenFlux/blob/0.0.5/COPYRIGHT)
-- [LICENSE](https://github.com/p1neappleXpress/OpenFlux/blob/0.0.5/LICENSE)
-- [NOTICE](https://github.com/p1neappleXpress/OpenFlux/blob/0.0.5/NOTICE)
+- [COPYRIGHT](https://github.com/p1neappleXpress/OpenFlux/blob/v0.1.0/COPYRIGHT)
+- [LICENSE](https://github.com/p1neappleXpress/OpenFlux/blob/v0.1.0/LICENSE)
+- [NOTICE](https://github.com/p1neappleXpress/OpenFlux/blob/v0.1.0/NOTICE)
 
 Формат ссылки `openflux://v1/` реализован по описанию и коду исходного проекта: [share/share.go](https://github.com/p1neappleXpress/OpenFlux/blob/09464988b85a1e813ca4de54a5d733c317b0e74a/share/share.go). Генерация ссылки в установщике не требует флага `--share` у закреплённого серверного бинарного файла.
 

@@ -19,8 +19,8 @@ import zlib
 
 
 PINNED_HASHES = {
-    "8211dd5343dd4eac49fcd2838ffcb9e1912c14a0e878c735395967999b0573c5",
-    "ffcc24b9c956517cb0b317a9fc7de5124c4bb29ebc9dafc837a84a55f6fcee7b",
+    "fcc1db93e21a2d4f88e35ec642a54ce206fb9f611c4780b8d4857bbe2d58190a",
+    "c2bfd8bd38e73bb75b6640b54eb582abb375de2b43af61574d3913fd9d2403be",
 }
 
 
@@ -139,7 +139,7 @@ def runtime_report(root, properties):
     out.append("Параметры CLI могут перекрывать server.conf: " + yes(any(option(args, flag) is not None for flag in overrides)))
     actual = digest(proc / "exe")
     installed = digest(root / "usr/local/bin/openflux")
-    out.append("Работающий бинарник соответствует закреплённому OpenFlux 0.0.5: " + yes(actual in PINNED_HASHES))
+    out.append("Работающий бинарник соответствует закреплённому OpenFlux v0.1.0: " + yes(actual in PINNED_HASHES))
     out.append("Работающий бинарник совпадает с файлом на диске: " + yes(bool(actual) and actual == installed))
     out.append("Файлы конфигурации могли измениться после запуска; это не проверка настроек в памяти.")
     return out
