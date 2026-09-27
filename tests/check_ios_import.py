@@ -108,7 +108,16 @@ def main():
         try:
             for mode in ('ios', 'session'):
                 for transport in ('yandex', 'vyandex'):
-                    stage = fixture.render(mode, transport)
+                    # Only the platform-neutral profile generators are needed.
+                    # write_client also emits Linux/Windows launchers with GNU sed.
+                    stage = Path(tempfile.mkdtemp(prefix='share-', dir=fixture.root))
+                    result = fixture.shell(
+                        'WORK="$1"; DOC_URL="$2"; TRANSPORT="$3"; PROFILE_MODE="$4"; '
+                        'set_profile_options; write_config; write_share',
+                        stage, 'https://disk.yandex.ru/i/Installer_Test_Document', transport, mode,
+                    )
+                    if result.returncode:
+                        raise SystemExit('Test-profile generation failed: ' + result.stderr)
                     link = (stage / 'config/connection.txt').read_text().strip()
                     packed = link.removeprefix('openflux://v1/')
                     cfg = json.loads(zlib.decompress(base64.urlsafe_b64decode(packed + '=' * (-len(packed) % 4)), -15))
