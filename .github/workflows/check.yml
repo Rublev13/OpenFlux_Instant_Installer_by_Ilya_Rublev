@@ -27,3 +27,5 @@ jobs:
         run: python3 tests/check_embedded_python.py
       - name: Проверить справку без установки
         run: bash openflux-install.sh --help
+      - name: Проверить шифрование и профили Android/ПК и iPhone
+        run: python3 tests/test_profiles.py

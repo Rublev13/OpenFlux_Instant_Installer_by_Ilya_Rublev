@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenFlux_Instant_Installer by_Ilya_Rublev 1.0.0 — автор установщика: Илья Рублев.
+# OpenFlux_Instant_Installer by_Ilya_Rublev 1.1.0 — автор установщика: Илья Рублев.
 # Copyright (C) 2026 Илья Рублев
 # License: GNU General Public License version 3; see LICENSE.
 # Telegram: https://t.me/Rublev_YouTube
@@ -15,7 +15,7 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION='1.0.0'
+readonly INSTALLER_VERSION='1.1.0'
 readonly OPENFLUX_VERSION='0.0.5'
 readonly UPSTREAM='https://github.com/p1neappleXpress/OpenFlux'
 readonly OWNER_TAG='rublev-openflux-installer-v1'
@@ -39,6 +39,10 @@ WAS_ACTIVE=0
 WAS_ENABLED=0
 DOC_URL=''
 TRANSPORT=''
+PROFILE_MODE='session'
+CODEC='batched'
+SESSION_FLAGS=''
+SESSION_LABEL='включено'
 ARCH=''
 ASSET_SHA=''
 TTY_FD=0
@@ -70,24 +74,29 @@ help_text() {
 После установки меню доступно командой: sudo openflux-setup
 
   --install    Установить / перенастроить (старый ключ сохраняется).
+  --install-ios Установить / перенастроить в режиме iPhone без negotiate.
   --uninstall  Удалить установку этого скрипта, включая ключ и профили.
   --status     Показать состояние службы.
   --logs       Последние 60 строк журнала OpenFlux.
   --client     Показать параметры клиента, включая секретный ключ.
-  --qr         Показать ссылку openflux://v1/ и QR-код для Android.
+  --key        Показать только текущий ключ шифрования.
+  --qr         Показать ссылку openflux://v1/ и QR-код выбранного режима.
   --help       Эта справка. Ничего не устанавливает.
 
 Поддерживаемые ОС: Ubuntu 22.04/24.04, Debian 12/13; amd64/arm64; systemd.
 Нужны root/sudo, доступ к пакетным репозиториям, GitHub и Яндексу.
-Установка: L4, batched, AES-256-GCM, --negotiate; без изменения firewall.
+Шифрование AES-256-GCM обязательно в обоих режимах; без изменения firewall.
+Android/ПК: L4, batched, negotiate. iPhone: L4, legacy, без negotiate.
 Создайте отдельный пустой документ, откройте редактирование по ссылке.
 Ссылка из «Поделиться» часто начинается с https://disk.yandex.ru/i/.
 Домен disk.yandex.ru в такой ссылке — это нормально.
 Скрипт определяет редактор по странице; если не удалось — спрашивает его.
 Служба active ещё не означает, что клиент уже соединился с VPS.
 Android: damnurmum/OpenFlux-Android v1.1.1, «Профили» → кнопка QR.
-iPhone: в опубликованном коде клиента нет импорта openflux:// и negotiate.
-Совместимость iOS/TestFlight с этим профилем не подтверждена.
+iPhone: https://testflight.apple.com/join/BwnAcdus
+Выберите режим iPhone. Нужна сборка с шифрованием AES-256-GCM.
+В проверенной ветке ios-testflight есть импорт ссылки/QR, но нет Session.
+Сквозной тест iOS не выполнен; ошибка SmartCaptcha требует решения в клиенте.
 
 Удаление затрагивает только установку, принадлежащую этому скрипту.
 Чужая установка (в том числе сделанная вручную) не перезаписывается.
@@ -178,6 +187,48 @@ choose_url() {
         warn 'Нужна полная ссылка https://disk.yandex.ru/i/ID из «Поделиться», без пробелов.'
     done
 }
+choose_mode() {
+    local choice default_choice=1
+    if [[ ${1:-} == ios ]]; then
+        PROFILE_MODE=ios
+        return
+    fi
+    if owned && [[ -f $CONFIG_DIR/.profile-mode && ! -L $CONFIG_DIR/.profile-mode ]] &&
+        [[ $(cat "$CONFIG_DIR/.profile-mode") == ios ]]; then
+        default_choice=2
+    fi
+    say 'Выберите режим подключения (AES-256-GCM включён в обоих):'
+    say '  1 — Android / ПК: согласование сессии (negotiate), batched'
+    say '  2 — iPhone / TestFlight: без negotiate, legacy (совместимость по исходникам)'
+    say 'Смена режима требует заново импортировать профиль на клиенте.'
+    while :; do
+        ask "Режим [$default_choice]: " choice
+        case "${choice:-$default_choice}" in
+            1) PROFILE_MODE=session; break ;;
+            2) PROFILE_MODE=ios; break ;;
+            *) warn 'Введите 1 или 2.' ;;
+        esac
+    done
+}
+set_profile_options() {
+    case "$PROFILE_MODE" in
+        session)
+            CODEC=batched
+            SESSION_FLAGS="--negotiate --transports=$TRANSPORT:100 --$TRANSPORT-url=$DOC_URL"
+            SESSION_LABEL='включено' ;;
+        ios)
+            CODEC=legacy
+            SESSION_FLAGS=''
+            SESSION_LABEL='выключено (режим iPhone)' ;;
+        *) fail 'Неизвестный режим профиля.' ;;
+    esac
+}
+validate_key() {
+    local key_file=$1 key_value
+    [[ -f $key_file && ! -L $key_file ]] || fail 'Файл ключа отсутствует или заменён ссылкой. Ключ автоматически не меняется.'
+    key_value=$(cat "$key_file")
+    [[ $key_value =~ ^[0-9a-fA-F]{64}$ ]] || fail 'Ключ повреждён: ожидаются 64 шестнадцатеричных символа. Восстановите secret.txt из своей резервной копии.'
+}
 dependencies() {
     step '1/5  Проверяем необходимые пакеты'
     local missing=() package
@@ -259,12 +310,14 @@ download_binary() {
 }
 write_config() {
     mkdir -p "$WORK/config" "$WORK/client"
-    if owned && [[ -f $CONFIG_DIR/secret.txt && ! -L $CONFIG_DIR/secret.txt ]]; then
-        [[ $(wc -c < "$CONFIG_DIR/secret.txt") -ge 16 ]] || fail 'Существующий ключ повреждён.'
+    if owned; then
+        validate_key "$CONFIG_DIR/secret.txt"
         cp "$CONFIG_DIR/secret.txt" "$WORK/config/secret.txt"
     else
         openssl rand -hex 32 > "$WORK/config/secret.txt"
     fi
+    validate_key "$WORK/config/secret.txt"
+    printf '%s\n' "$PROFILE_MODE" > "$WORK/config/.profile-mode"
     printf '%s\n' "$OWNER_TAG" > "$WORK/config/.installer-owner"
     cat > "$WORK/config/server.conf" <<EOF
 # Установщик: Илья Рублев — https://t.me/Rublev_YouTube
@@ -274,7 +327,7 @@ write_config() {
 Role = exit
 Mode = l4
 Transport = $TRANSPORT
-Codec = batched
+Codec = $CODEC
 URL = $DOC_URL
 EncryptionKeyFile = $CONFIG_DIR/secret.txt
 CookieStore = $STATE_DIR/cookies.json
@@ -298,7 +351,7 @@ Type=simple
 User=$ACCOUNT
 Group=$ACCOUNT
 WorkingDirectory=$STATE_DIR
-ExecStart=$BIN --config=$CONFIG_DIR/server.conf --negotiate --transports=$TRANSPORT:100 --$TRANSPORT-url=$DOC_URL
+ExecStart=$BIN --config=$CONFIG_DIR/server.conf --encryption-key-file=$CONFIG_DIR/secret.txt $SESSION_FLAGS
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=20
@@ -342,12 +395,12 @@ write_client() {
 # Установщик: Илья Рублев — https://t.me/Rublev_YouTube
 # https://boosty.to/rublev13 | https://www.youtube.com/@Ilya_Rublev
 # OpenFlux: $UPSTREAM
-# Запускайте через прилагаемый start-openflux: он передаёт флаги Session.
+# Запускайте через прилагаемый start-openflux: он передаёт флаги выбранного режима.
 [Interface]
 Role = client
 Inbound = socks5
 Transport = $TRANSPORT
-Codec = batched
+Codec = $CODEC
 Socks5 = 127.0.0.1:1080
 URL = $DOC_URL
 EncryptionKeyFile = secret.txt
@@ -369,10 +422,10 @@ if not exist "openflux.exe" (
   pause
   exit /b 1
 )
-"%~dp0openflux.exe" --config=client.conf --negotiate __SESSION_FLAGS__
+"%~dp0openflux.exe" --config=client.conf --encryption-key-file=secret.txt __SESSION_FLAGS__
 pause
 CMD
-    sed -i "s|__SESSION_FLAGS__|--transports=$TRANSPORT:100 --$TRANSPORT-url=$DOC_URL|" "$WORK/client/start-openflux.cmd"
+    sed -i "s|__SESSION_FLAGS__|$SESSION_FLAGS|" "$WORK/client/start-openflux.cmd"
     # Windows cmd expects CRLF.
     sed -i 's/$/\r/' "$WORK/client/start-openflux.cmd"
     cat > "$WORK/client/start-openflux.sh" <<'SH'
@@ -384,9 +437,9 @@ CMD
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 [[ -x ./openflux ]] || { echo 'Добавьте сюда официальный бинарник openflux и выполните chmod +x openflux.'; exit 1; }
-exec ./openflux --config=client.conf --negotiate __SESSION_FLAGS__
+exec ./openflux --config=client.conf --encryption-key-file=secret.txt __SESSION_FLAGS__
 SH
-    sed -i "s|__SESSION_FLAGS__|--transports=$TRANSPORT:100 --$TRANSPORT-url=$DOC_URL|" "$WORK/client/start-openflux.sh"
+    sed -i "s|__SESSION_FLAGS__|$SESSION_FLAGS|" "$WORK/client/start-openflux.sh"
     cat > "$WORK/config/client.txt" <<EOF
 OpenFlux_Instant_Installer by_Ilya_Rublev
 ПАРАМЕТРЫ КЛИЕНТА
@@ -399,9 +452,10 @@ OpenFlux: $UPSTREAM
 Версия ядра: $OPENFLUX_VERSION
 Ссылка (переносите без изменений): $DOC_URL
 Транспорт: $TRANSPORT
-Codec: batched
-Шифрование: AES-256-GCM; negotiate / Session: включено
-Имя транспорта в сессии: $TRANSPORT
+Режим профиля: $PROFILE_MODE
+Codec: $CODEC
+Шифрование: AES-256-GCM (обязательно)
+negotiate / Session: $SESSION_LABEL
 Секретный ключ (не публикуйте): $(cat "$WORK/config/secret.txt")
 Локальный SOCKS5 на ПК: 127.0.0.1:1080
 
@@ -413,9 +467,16 @@ Android: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1
 Ссылка и QR содержат ключ. Не публикуйте их и не показывайте в видео.
 Повторный вывод ссылки и QR: sudo openflux-setup --qr
 
-iPhone: в опубликованном коде iOS-клиента отсутствуют импорт openflux://
-и режим negotiate. Этот профиль не заявляется совместимым с iOS/TestFlight.
-Для iPhone нужна сборка с поддержкой данного формата и режима сессии.
+iPhone: https://testflight.apple.com/join/BwnAcdus
+На VPS выберите режим iPhone (ios): legacy без negotiate.
+В проверенной ветке ios-testflight есть импорт openflux:// и QR.
+После импорта проверьте AES-256-GCM и общий секрет в настройках профиля.
+Если импорта нет, введите ссылку, транспорт и секрет выше вручную.
+Для vyandex в iOS может использоваться название VOLGA / Волга.
+Ключ и ссылка должны совпадать с сервером без изменений.
+Шифрование не отключается при выборе iPhone. Сквозной тест iOS не выполнен.
+SmartCaptcha может остановить авторизацию ещё до подключения к VPS;
+серверный установщик не исправляет обработку капчи в приложении.
 client.conf — формат CLI; его импорт в мобильные приложения не предусмотрен.
 EOF
     cp "$WORK/config/client.txt" "$WORK/client/README.txt"
@@ -464,15 +525,17 @@ PY
 write_share() {
     # Формат upstream share/share.go: JSON → raw DEFLATE → base64url без padding.
     # Не зависит от наличия --share в серверном бинарнике 0.0.5.
-    python3 - "$WORK/config/secret.txt" "$DOC_URL" "$TRANSPORT" "$WORK/config/connection.txt" <<'PY'
-import base64, json, pathlib, sys, zlib
-key_path, url, transport, out_path = sys.argv[1:]
+    python3 - "$WORK/config/secret.txt" "$DOC_URL" "$TRANSPORT" "$WORK/config/connection.txt" "$PROFILE_MODE" <<'PY'
+import base64, json, pathlib, re, sys, zlib
+key_path, url, transport, out_path, mode = sys.argv[1:]
 key = pathlib.Path(key_path).read_text(encoding='utf-8').strip()
-if len(key) < 16:
-    raise SystemExit('Ключ шифрования должен содержать не менее 16 символов.')
+if not re.fullmatch(r'[0-9a-fA-F]{64}', key):
+    raise SystemExit('Ключ шифрования должен содержать 64 шестнадцатеричных символа.')
+if mode not in ('session', 'ios'):
+    raise SystemExit('Неизвестный режим профиля.')
 profile = {
     'name': 'OpenFlux_Instant_Installer by_Ilya_Rublev',
-    'negotiate': True,
+    'negotiate': mode == 'session',
     'secret': key,
     'context': url,
     'transports': [{'type': transport, 'url': url, 'priority': 100}],
@@ -489,8 +552,9 @@ show_qr() {
     need_root
     owned || fail 'Установка этого скрипта не найдена.'
     [[ -s $CONFIG_DIR/connection.txt ]] || fail 'Ссылка ещё не создана. Запустите пункт 1 для перенастройки.'
-    step 'Подключение OpenFlux / Android'
+    step 'Подключение OpenFlux / AES-256-GCM'
     say 'Клиент: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1'
+    say 'iPhone: https://testflight.apple.com/join/BwnAcdus (на VPS нужен режим iPhone)'
     say 'Откройте «Профили» → кнопку QR, отсканируйте код, сохраните профиль.'
     warn 'Ссылка и QR содержат ключ доступа. Не публикуйте их.'
     say ''
@@ -501,7 +565,9 @@ show_qr() {
     fi
     say "PNG с QR: $CONFIG_DIR/connection.png (также внутри client.zip)."
     say 'Если QR переносится на новую строку, расширьте окно терминала или откройте PNG.'
-    warn 'iPhone: поддержка этого импорта и режима сессии в текущем iOS-клиенте не подтверждена.'
+    say 'Параметры выбранного режима: sudo openflux-setup --client'
+    say 'Показать только ключ шифрования: sudo openflux-setup --key'
+    warn 'Совместимость с конкретной сборкой TestFlight требует проверки на телефоне.'
 }
 account_matches() {
     local row
@@ -585,9 +651,11 @@ install_openflux() {
     assert_paths
     need_tty
     choose_url
+    choose_mode "${1:-}"
     make_work
     dependencies
     detect_transport
+    set_profile_options
     download_binary
     write_config
     write_client
@@ -604,6 +672,7 @@ install_openflux() {
     install -m 640 -o root -g "$ACCOUNT" "$WORK/config/server.conf" "$CONFIG_DIR/server.conf"
     install -m 640 -o root -g "$ACCOUNT" "$WORK/config/secret.txt" "$CONFIG_DIR/secret.txt"
     install -m 600 -o root -g root "$WORK/config/.installer-owner" "$MARKER"
+    install -m 600 -o root -g root "$WORK/config/.profile-mode" "$CONFIG_DIR/.profile-mode"
     install -m 600 -o root -g root "$WORK/config/client.txt" "$CONFIG_DIR/client.txt"
     install -m 600 -o root -g root "$WORK/config/client.zip" "$CONFIG_DIR/client.zip"
     install -m 600 -o root -g root "$WORK/config/connection.txt" "$CONFIG_DIR/connection.txt"
@@ -623,6 +692,7 @@ install_openflux() {
     fi
     TRANSACTION=0
     ok 'OpenFlux установлен; процесс запущен; автозапуск включён'
+    ok "AES-256-GCM настроено; ключ включён в ссылку и QR; режим: $PROFILE_MODE"
     say 'Соединение через документ проверяется после подключения клиента.'
     say "Клиентский архив: $CONFIG_DIR/client.zip (содержит ключ; скачайте через SFTP)."
     say "Параметры клиента: sudo openflux-setup --client"
@@ -667,6 +737,12 @@ show_client() {
     owned || fail 'Установка этого скрипта не найдена.'
     cat "$CONFIG_DIR/client.txt"
 }
+show_key() {
+    need_root
+    owned || fail 'Установка этого скрипта не найдена.'
+    validate_key "$CONFIG_DIR/secret.txt"
+    cat "$CONFIG_DIR/secret.txt"
+}
 show_logs() {
     need_root
     owned || fail 'Установка этого скрипта не найдена.'
@@ -682,13 +758,16 @@ main() {
     local action=${1:-} choice
     (($# <= 1)) || fail 'Допускается один параметр. Справка: --help'
     if [[ $action == --help || $action == -h ]]; then help_text; return; fi
+    if [[ $action == --key ]]; then show_key; return; fi
     brand
     case "$action" in
         --install) install_openflux ;;
+        --install-ios) install_openflux ios ;;
         --uninstall) uninstall_openflux ;;
         --status) systemctl --no-pager --full status "$SERVICE" ;;
         --logs) show_logs ;;
         --client) show_client ;;
+        --key) show_key ;;
         --qr) show_qr ;;
         '')
             need_root
@@ -696,6 +775,7 @@ main() {
             say '  1. Установить / перенастроить OpenFlux'
             say '  2. Полностью удалить OpenFlux'
             say '  3. Показать QR-код и ссылку подключения'
+            say '  4. Показать ключ шифрования'
             say '  0. Выход'
             say ''
             while :; do
@@ -704,8 +784,9 @@ main() {
                     1|'') install_openflux; break ;;
                     2) uninstall_openflux; break ;;
                     3) show_qr; break ;;
+                    4) show_key; break ;;
                     0) break ;;
-                    *) warn 'Введите 1, 2, 3 или 0.' ;;
+                    *) warn 'Введите 1, 2, 3, 4 или 0.' ;;
                 esac
             done ;;
         *) fail "Неизвестный параметр: $action. Справка: --help" ;;
