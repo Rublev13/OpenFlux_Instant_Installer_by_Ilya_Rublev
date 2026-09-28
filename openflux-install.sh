@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# OpenFlux_Instant_Installer by_Ilya_Rublev 1.2.0 — автор установщика: Илья Рублев.
+# OpenFlux_Instant_Installer by_Ilya_Rublev 1.3.0 — автор установщика: Илья Рублев.
 # Copyright (C) 2026 Илья Рублев
 # License: GNU General Public License version 3; see LICENSE.
 # Telegram: https://t.me/Rublev_YouTube
@@ -15,13 +15,16 @@
 set -Eeuo pipefail
 umask 077
 
-readonly INSTALLER_VERSION='1.2.0'
-readonly OPENFLUX_VERSION='v0.1.0'
+readonly INSTALLER_VERSION='1.3.0'
+readonly OPENFLUX_VERSION='node-v1.0.1'
+# The node release contains Linux binaries only. Keep the optional CLI separate.
+readonly CLI_VERSION='v0.1.0'
 readonly UPSTREAM='https://github.com/p1neappleXpress/OpenFlux'
 readonly OWNER_TAG='rublev-openflux-installer-v1'
 readonly CONFIG_DIR='/etc/openflux'
 readonly STATE_DIR='/var/lib/openflux'
 readonly LOG_DIR='/var/log/openflux'
+readonly BACKUP_DIR='/var/backups/openflux-rublev'
 readonly BIN='/usr/local/bin/openflux'
 readonly MANAGER='/usr/local/sbin/openflux-setup'
 readonly UNIT='/etc/systemd/system/openflux.service'
@@ -29,14 +32,18 @@ readonly ROTATE='/etc/logrotate.d/openflux'
 readonly SERVICE='openflux.service'
 readonly ACCOUNT='openflux-rublev'
 readonly MARKER="$CONFIG_DIR/.installer-owner"
-readonly LINUX_AMD64_SHA='fcc1db93e21a2d4f88e35ec642a54ce206fb9f611c4780b8d4857bbe2d58190a'
-readonly LINUX_ARM64_SHA='c2bfd8bd38e73bb75b6640b54eb582abb375de2b43af61574d3913fd9d2403be'
+readonly LINUX_AMD64_SHA='9fa157550d2c20c0bc03c12823b4ad0140ba070199b5548eacf98c5a2cca6cb8'
+readonly LINUX_ARM64_SHA='325335fa416d2f87cba84c5a85d865c596169cd79c7f4cfc916cd67a88612886'
 
 WORK=''
 TRANSACTION=0
 HAD_INSTALL=0
 WAS_ACTIVE=0
 WAS_ENABLED=0
+STATE_SNAPSHOT=0
+SAVED_BACKUP=''
+LOG_START_BYTES=0
+START_REASON=''
 DOC_URL=''
 TRANSPORT=''
 PROFILE_MODE='session'
@@ -75,6 +82,7 @@ help_text() {
 
   --install    Установить / перенастроить (старый ключ сохраняется).
   --install-ios Установить / перенастроить в режиме iPhone без negotiate.
+  --update     Обновить существующую установку, сохранив ключ, документ и режим.
   --uninstall  Удалить установку этого скрипта, включая ключ и профили.
   --status     Показать состояние службы.
   --logs       Последние 60 строк журнала OpenFlux.
@@ -93,12 +101,13 @@ Android/ПК: L4, batched, negotiate. iPhone: L4, legacy, без negotiate.
 Домен disk.yandex.ru в такой ссылке — это нормально.
 Скрипт определяет редактор по странице; если не удалось — спрашивает его.
 Служба active ещё не означает, что клиент уже соединился с VPS.
-Android: damnurmum/OpenFlux-Android v1.1.1, «Профили» → кнопка QR.
-Другой клиент p1neappleXpress/OpenFluxAndroid 0.0.2 этот QR не поддерживает.
+Android: p1neappleXpress/OpenFluxAndroid v2.0.1, импорт openflux:// или QR.
+ПК: p1neappleXpress/OpenFluxDesktop v2.0.2, импорт той же ссылки.
 iPhone: https://testflight.apple.com/join/BwnAcdus
 Выберите режим iPhone. Нужна сборка с шифрованием AES-256-GCM.
-В проверенной ветке ios-testflight есть импорт ссылки/QR, но нет Session.
-Сквозной тест iOS не выполнен; ошибка SmartCaptcha требует решения в клиенте.
+Обновите TestFlight: исправлен импорт ключа. Включите системный VPN в клиенте.
+Session на iOS не предполагается: для iPhone оставлен режим legacy.
+Капчу на VPS и на телефоне может потребоваться пройти отдельно.
 
 Удаление затрагивает только установку, принадлежащую этому скрипту.
 Чужая установка (в том числе сделанная вручную) не перезаписывается.
@@ -122,9 +131,14 @@ ask() {
 owned() { [[ -f $MARKER && ! -L $MARKER ]] && [[ $(cat "$MARKER") == "$OWNER_TAG" ]]; }
 assert_paths() {
     local p
-    for p in "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR" "$BIN" "$MANAGER" "$UNIT" "$ROTATE"; do
+    for p in "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR" "$BIN" "$MANAGER" "$UNIT" "$ROTATE" "$BACKUP_DIR"; do
         [[ ! -L $p ]] || fail "Обнаружена символьная ссылка: $p. Требуется ручная проверка."
     done
+    if [[ -e $BACKUP_DIR ]]; then
+        [[ -f $BACKUP_DIR/.installer-owner && ! -L $BACKUP_DIR/.installer-owner ]] &&
+            [[ $(cat "$BACKUP_DIR/.installer-owner") == "$OWNER_TAG" ]] ||
+            fail 'Каталог резервных копий не принадлежит установщику.'
+    fi
     if owned; then
         if [[ -e $UNIT ]] && ! grep -Fqx "# $OWNER_TAG" "$UNIT"; then
             fail 'Служба openflux.service заменена сторонней настройкой. Автоматическая операция отменена.'
@@ -201,7 +215,7 @@ choose_mode() {
     fi
     say 'Выберите режим подключения (AES-256-GCM включён в обоих):'
     say '  1 — Android / ПК: согласование сессии (negotiate), batched'
-    say '  2 — iPhone / TestFlight: без negotiate, legacy (совместимость по исходникам)'
+    say '  2 — iPhone / TestFlight: без negotiate, legacy'
     say 'Смена режима требует заново импортировать профиль на клиенте.'
     while :; do
         ask "Режим [$default_choice]: " choice
@@ -230,6 +244,41 @@ validate_key() {
     [[ -f $key_file && ! -L $key_file ]] || fail 'Файл ключа отсутствует или заменён ссылкой. Ключ автоматически не меняется.'
     key_value=$(cat "$key_file")
     [[ $key_value =~ ^[0-9a-fA-F]{64}$ ]] || fail 'Ключ повреждён: ожидаются 64 шестнадцатеричных символа. Восстановите secret.txt из своей резервной копии.'
+}
+load_existing_profile() {
+    owned || fail 'Установка не найдена. Сначала выберите пункт 1.'
+    validate_key "$CONFIG_DIR/secret.txt"
+    local p metadata
+    for p in server.conf .profile-mode; do
+        [[ -f $CONFIG_DIR/$p && ! -L $CONFIG_DIR/$p ]] || fail 'Файлы настройки отсутствуют или заменены ссылками.'
+    done
+    [[ -z $(systemctl show "$SERVICE" --property=DropInPaths --value) ]] ||
+        fail 'У службы есть переопределения systemd. Автоматическое обновление отменено.'
+    # Do not log document URLs or try to infer/migrate the editor during an update.
+    metadata=$(python3 - "$CONFIG_DIR" "$STATE_DIR" <<'PY'
+import configparser, pathlib, re, sys
+try:
+    root, state = map(pathlib.Path, sys.argv[1:])
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read_string((root / 'server.conf').read_text())
+    cfg = parser['Interface']
+    mode = (root / '.profile-mode').read_text().strip()
+    url, transport = cfg.get('URL', ''), cfg.get('Transport')
+    valid = (cfg.get('Role') == 'exit' and cfg.get('Mode') == 'l4'
+             and mode in ('ios', 'session') and transport in ('yandex', 'vyandex')
+             and cfg.get('Codec') == ('legacy' if mode == 'ios' else 'batched')
+             and cfg.get('EncryptionKeyFile') == str(root / 'secret.txt')
+             and cfg.get('CookieStore') == str(state / 'cookies.json')
+             and re.fullmatch(r'https://disk\.yandex\.ru/i/[A-Za-z0-9_-]+/?', url))
+    if not valid:
+        raise ValueError()
+    print(url, transport, mode, sep='\n')
+except (OSError, ValueError, KeyError, configparser.Error):
+    raise SystemExit('Настройки не соответствуют установщику. Обновление отменено; ключ не изменён.')
+PY
+    )
+    { IFS= read -r DOC_URL; IFS= read -r TRANSPORT; IFS= read -r PROFILE_MODE; } <<< "$metadata"
+    ok "Сохраняем существующий документ, ключ и режим: $PROFILE_MODE / $TRANSPORT"
 }
 dependencies() {
     step '1/5  Проверяем необходимые пакеты'
@@ -451,7 +500,8 @@ Boosty: https://boosty.to/rublev13
 YouTube: https://www.youtube.com/@Ilya_Rublev
 OpenFlux: $UPSTREAM
 
-Версия ядра: $OPENFLUX_VERSION
+Версия серверного ядра: $OPENFLUX_VERSION
+Версия дополнительного CLI-клиента: $CLI_VERSION
 Ссылка (переносите без изменений): $DOC_URL
 Транспорт: $TRANSPORT
 Режим профиля: $PROFILE_MODE
@@ -463,9 +513,10 @@ negotiate / Session: $SESSION_LABEL
 
 Профиль с ключом: $CONFIG_DIR/client.zip — скачайте через SFTP на свой ПК.
 Одна активная клиентская сессия. Выход — через этот VPS.
-Android: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1
-Не путайте с p1neappleXpress/OpenFluxAndroid 0.0.2: у него другой формат QR
-и нет настройки ключа AES-256-GCM. Для этой установки нужен клиент выше.
+Android: https://github.com/p1neappleXpress/OpenFluxAndroid/releases/tag/v2.0.1
+ПК: https://github.com/p1neappleXpress/OpenFluxDesktop/releases/tag/v2.0.2
+Импортируйте openflux:// или QR. На Android выберите системный VPN,
+на Windows — системный прокси или полный туннель. Один SOCKS не меняет маршруты ОС.
 В приложении: «Профили» → кнопка QR → отсканируйте код с экрана VPS.
 Можно открыть ссылку openflux://v1/… на телефоне с установленным приложением.
 Ссылка и QR содержат ключ. Не публикуйте их и не показывайте в видео.
@@ -473,19 +524,18 @@ Android: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1
 
 iPhone: https://testflight.apple.com/join/BwnAcdus
 На VPS выберите режим iPhone (ios): legacy без negotiate.
-В проверенной ветке ios-testflight есть импорт openflux:// и QR.
-После импорта проверьте AES-256-GCM и общий секрет в настройках профиля.
-В проверенной iOS-ветке импорт одного профиля ошибочно заполняет «Ключ
-прямого канала». Если «Общий секрет» пуст, перенесите ключ в поле
-«Шифрование (AES-256-GCM) → Общий секрет», очистите ненужный ключ
-прямого канала, сохраните профиль и переподключитесь.
+Обновите приложение в TestFlight: в новой сборке импорт ключа исправлен.
+Импортируйте QR или openflux:// и проверьте, что общий секрет сохранён.
 На iPhone новый ключ не создаётся: используется тот же секрет, что на VPS.
-Если импорта нет, введите ссылку, транспорт и секрет выше вручную.
+Подключите системный VPN и разрешите добавление VPN-конфигурации iOS.
+Локальный SOCKS внутри приложения сам по себе не подключает Safari.
 Для vyandex в iOS может использоваться название VOLGA / Волга.
-Ключ и ссылка должны совпадать с сервером без изменений.
-Шифрование не отключается при выборе iPhone. Сквозной тест iOS не выполнен.
-SmartCaptcha может остановить авторизацию ещё до подключения к VPS;
-серверный установщик не исправляет обработку капчи в приложении.
+Документ, секрет и режим должны совпадать с сервером без изменений.
+Если ключ пуст после импорта, обновите TestFlight; обход для старых сборок:
+https://github.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/tree/main/patches
+Капча на телефоне и капча на IP VPS могут требовать отдельных действий.
+Если VPS требует капчу, смотрите CAPTCHA.md в репозитории установщика.
+Сквозная проверка требует открыть сайт с телефона и сверить IP с VPS.
 client.conf — формат CLI; его импорт в мобильные приложения не предусмотрен.
 EOF
     cp "$WORK/config/client.txt" "$WORK/client/README.txt"
@@ -494,7 +544,7 @@ EOF
 WINDOWS 10/11 x64
 1. Распакуйте весь архив в отдельную папку.
 2. Скачайте:
-$UPSTREAM/releases/download/$OPENFLUX_VERSION/openflux-windows-amd64.exe
+$UPSTREAM/releases/download/$CLI_VERSION/openflux-windows-amd64.exe
 3. Переименуйте скачанный файл в openflux.exe и поместите в ту же папку.
 SHA-256: c2d29100e194e0121d079f6419d22b8bec5490130f175ec98a0e59ef9eb06eaa
 4. Дважды нажмите start-openflux.cmd. Оставьте окно открытым.
@@ -563,8 +613,8 @@ show_qr() {
     owned || fail 'Установка этого скрипта не найдена.'
     [[ -s $CONFIG_DIR/connection.txt ]] || fail 'Ссылка ещё не создана. Запустите пункт 1 для перенастройки.'
     step 'Подключение OpenFlux / AES-256-GCM'
-    say 'Клиент: https://github.com/damnurmum/OpenFlux-Android/releases/tag/v1.1.1'
-    warn 'p1neappleXpress/OpenFluxAndroid 0.0.2 не понимает этот формат QR и ключа.'
+    say 'Android: https://github.com/p1neappleXpress/OpenFluxAndroid/releases/tag/v2.0.1'
+    say 'ПК: https://github.com/p1neappleXpress/OpenFluxDesktop/releases/tag/v2.0.2'
     say 'iPhone: https://testflight.apple.com/join/BwnAcdus (на VPS нужен режим iPhone)'
     say 'Откройте «Профили» → кнопку QR, отсканируйте код, сохраните профиль.'
     warn 'Ссылка и QR содержат ключ доступа. Не публикуйте их.'
@@ -579,10 +629,8 @@ show_qr() {
     say 'Параметры выбранного режима: sudo openflux-setup --client'
     say 'Показать только ключ шифрования: sudo openflux-setup --key'
     if [[ -f $CONFIG_DIR/.profile-mode ]] && [[ $(cat "$CONFIG_DIR/.profile-mode") == ios ]]; then
-        warn 'iPhone: после импорта откройте «Изменить профиль» → «Шифрование (AES-256-GCM)».'
-        say 'Если «Общий секрет» пуст, перенесите туда ключ из «Ключ прямого канала»'
-        say 'или из вывода sudo openflux-setup --key. Очистите ненужный ключ прямого канала.'
-        say 'Сохраните профиль, откройте снова и убедитесь, что секрет сохранился.'
+        say 'iPhone: обновите TestFlight, импортируйте профиль и включите системный VPN.'
+        say 'Убедитесь, что общий секрет сохранился; новый ключ на телефоне создавать не нужно.'
     fi
     warn 'Совместимость с конкретной сборкой TestFlight требует проверки на телефоне.'
 }
@@ -611,6 +659,58 @@ snapshot() {
     fi
     return 0
 }
+save_stopped_state() {
+    # Called only after systemctl stop: the core cannot change cookies mid-copy.
+    if ((HAD_INSTALL)); then
+        [[ ! -e $STATE_DIR ]] || cp -a "$STATE_DIR" "$WORK/backup/state"
+        STATE_SNAPSHOT=1
+        install -d -m 700 -o root -g root "$BACKUP_DIR"
+        printf '%s\n' "$OWNER_TAG" > "$BACKUP_DIR/.installer-owner"
+        chmod 600 "$BACKUP_DIR/.installer-owner"
+        SAVED_BACKUP=$(mktemp -d "$BACKUP_DIR/snapshot.XXXXXXXX")
+        cp -a "$WORK/backup/." "$SAVED_BACKUP/"
+        printf 'Installer target: %s\nCore target: %s\n' "$INSTALLER_VERSION" "$OPENFLUX_VERSION" > "$SAVED_BACKUP/target.txt"
+        ok "Резервная копия прежней установки (только root): $SAVED_BACKUP"
+    fi
+}
+
+startup_health() {
+    local first='' current prop value pid='' state='' sub='' restarts='' i
+    # Type=simple only confirms exec(). Observe PID and restarts for 20 seconds.
+    for ((i=0; i<=10; i++)); do
+        current=$(systemctl show "$SERVICE" --no-pager --property=ActiveState,SubState,MainPID,NRestarts) || return 1
+        while IFS='=' read -r prop value; do
+            case "$prop" in
+                ActiveState) state=$value ;;
+                SubState) sub=$value ;;
+                MainPID) pid=$value ;;
+                NRestarts) restarts=$value ;;
+            esac
+        done <<< "$current"
+        [[ $state == active && $sub == running && $pid =~ ^[1-9][0-9]*$ && $restarts =~ ^[0-9]+$ ]] || return 1
+        if [[ -z $first ]]; then first="$pid:$restarts"
+        elif [[ $first != "$pid:$restarts" ]]; then return 1; fi
+        ((i == 10)) || sleep 2
+    done
+}
+startup_failure_reason() {
+    # Only classify lines written by this start. Never print raw logs or cookies.
+    START_REASON=$(python3 - "$LOG_DIR/openflux.log" "$LOG_START_BYTES" <<'PY'
+import pathlib, re, sys
+try:
+    with pathlib.Path(sys.argv[1]).open('rb') as stream:
+        stream.seek(0, 2)
+        size = stream.tell()
+        start = int(sys.argv[2])
+        stream.seek(max(start if size >= start else 0, size - 131072))
+        lines = stream.read(131072).decode(errors='replace').splitlines()
+    fatal = next((line for line in reversed(lines) if 'Failed to start transport:' in line), '')
+    print('captcha' if re.search(r'SmartCaptcha|captcha required|ErrCaptchaRequired', fatal, re.I) else 'other')
+except (OSError, ValueError):
+    print('other')
+PY
+    )
+}
 atomic_install() {
     local source=$1 target=$2 mode=$3 temp
     temp=$(mktemp "${target}.XXXXXXXX")
@@ -634,6 +734,10 @@ rollback() {
     if ((HAD_INSTALL)); then
         rm -rf -- "$CONFIG_DIR"
         cp -a "$WORK/backup/config" "$CONFIG_DIR"
+        if ((STATE_SNAPSHOT)); then
+            rm -rf -- "$STATE_DIR"
+            [[ ! -e $WORK/backup/state ]] || cp -a "$WORK/backup/state" "$STATE_DIR"
+        fi
         local p
         for p in "$BIN" "$UNIT" "$MANAGER" "$ROTATE"; do
             if [[ -e $WORK/backup/${p//\//_} ]]; then
@@ -666,21 +770,29 @@ install_openflux() {
     preflight
     lock_operation
     assert_paths
-    need_tty
-    choose_url
-    choose_mode "${1:-}"
+    if [[ ${1:-} == update ]]; then
+        load_existing_profile
+    else
+        need_tty
+        choose_url
+        choose_mode "${1:-}"
+    fi
     make_work
     dependencies
-    detect_transport
+    if [[ ${1:-} != update ]]; then detect_transport
+    else step '2/5  Сохраняем выбранный редактор без повторной авторизации'; fi
     set_profile_options
     download_binary
     write_config
+    # Preserve any additional INI settings as well as the exact document/KDF URL.
+    [[ ${1:-} != update ]] || cp "$CONFIG_DIR/server.conf" "$WORK/config/server.conf"
     write_client
     snapshot
     step '4/5  Устанавливаем файлы и службу автозапуска'
     TRANSACTION=1
     if ((HAD_INSTALL)); then
         systemctl stop "$SERVICE"
+        save_stopped_state
     else
         useradd --system --user-group --no-create-home --home-dir "$STATE_DIR" --shell /usr/sbin/nologin "$ACCOUNT"
     fi
@@ -700,25 +812,40 @@ install_openflux() {
     atomic_install "$WORK/installer.sh" "$MANAGER" 755
     systemctl daemon-reload
     systemctl enable "$SERVICE"
+    LOG_START_BYTES=$(stat -c %s "$LOG_DIR/openflux.log" 2>/dev/null || printf '0')
     systemctl start "$SERVICE"
-    step '5/5  Проверяем запуск службы'
-    sleep 3
-    if ! systemctl is-active --quiet "$SERVICE"; then
-        [[ ! -f $LOG_DIR/openflux.log ]] || tail -n 30 "$LOG_DIR/openflux.log"
-        fail 'Служба не запустилась. Изменения будут отменены.'
+    step '5/5  Наблюдаем запуск 20 секунд: процесс, состояние и перезапуски'
+    local needs_captcha=0
+    if ! startup_health; then
+        startup_failure_reason
+        if [[ $START_REASON == captcha ]]; then
+            # Keep the account and configuration so manual cookie import can work.
+            systemctl stop "$SERVICE"
+            needs_captcha=1
+            warn 'Файлы установлены, но Яндекс требует капчу на IP VPS. Выход в интернет не готов.'
+            say 'Служба остановлена, чтобы прекратить цикл перезапусков.'
+            say 'Пройдите капчу через IP VPS и импортируйте cookies по инструкции:'
+            say 'https://github.com/Rublev13/OpenFlux_Instant_Installer_by_Ilya_Rublev/blob/main/CAPTCHA.md'
+        else
+            fail 'Служба остановилась или перезапускается. Изменения будут отменены; исходные строки журнала скрыты.'
+        fi
     fi
     TRANSACTION=0
-    ok 'OpenFlux установлен; процесс запущен; автозапуск включён'
+    if ((!needs_captcha)); then
+        ok "OpenFlux $OPENFLUX_VERSION установлен; процесс проработал 20 секунд без перезапуска"
+        say 'Автозапуск включён. Доступность интернета с телефона этой проверкой не подтверждается.'
+    fi
     ok "AES-256-GCM настроено; ключ включён в ссылку и QR; режим: $PROFILE_MODE"
     say 'Соединение через документ проверяется после подключения клиента.'
     say "Клиентский архив: $CONFIG_DIR/client.zip (содержит ключ; скачайте через SFTP)."
     say "Параметры клиента: sudo openflux-setup --client"
     say 'Меню: sudo openflux-setup'
     say 'Журнал: sudo openflux-setup --logs'
-    say 'Windows: в архиве есть запуск двойным щелчком и инструкция README.txt.'
+    say 'Windows/ПК: используйте OpenFluxDesktop v2.0.2; CLI-запуск также есть в архиве.'
     say 'Для зарубежного выхода эта установка должна работать на зарубежном VPS.'
     show_qr
     brand
+    ((needs_captcha == 0)) || return 2
 }
 uninstall_openflux() {
     need_root
@@ -727,8 +854,8 @@ uninstall_openflux() {
     assert_paths
     if ! owned; then say 'Установка этого скрипта не найдена.'; return; fi
     need_tty
-    warn 'Будут удалены OpenFlux, служба, ключ, конфигурация, cookies, профили и журналы OpenFlux.'
-    say "Каталоги: $CONFIG_DIR, $STATE_DIR, $LOG_DIR"
+    warn 'Будут удалены OpenFlux, служба, ключ, конфигурация, cookies, профили, резервные копии и журналы OpenFlux.'
+    say "Каталоги: $CONFIG_DIR, $STATE_DIR, $LOG_DIR, $BACKUP_DIR"
     say "Файлы: $BIN, $UNIT, $ROTATE, $MANAGER"
     say "Системный пользователь: $ACCOUNT"
     local answer
@@ -741,7 +868,7 @@ uninstall_openflux() {
     # Не очищаем общий journal и не удаляем системные зависимости.
     remove_account
     rm -f -- "$BIN" "$UNIT" "$ROTATE" "$MANAGER"
-    rm -rf -- "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR"
+    rm -rf -- "$CONFIG_DIR" "$STATE_DIR" "$LOG_DIR" "$BACKUP_DIR"
     systemctl daemon-reload
     systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
     ok 'Установка OpenFlux и её данные удалены'
@@ -829,6 +956,7 @@ main() {
     case "$action" in
         --install) install_openflux ;;
         --install-ios) install_openflux ios ;;
+        --update) install_openflux update ;;
         --uninstall) uninstall_openflux ;;
         --status) systemctl --no-pager --full status "$SERVICE" ;;
         --logs) show_logs ;;
@@ -844,6 +972,7 @@ main() {
             say '  3. Показать QR-код и ссылку подключения'
             say '  4. Показать ключ шифрования'
             say '  5. Проверить ключ и профиль без вывода секрета'
+            say '  6. Обновить OpenFlux, сохранив ключ, документ, cookies и режим'
             say '  0. Выход'
             say ''
             while :; do
@@ -854,8 +983,9 @@ main() {
                     3) show_qr; break ;;
                     4) show_key; break ;;
                     5) check_profile; break ;;
+                    6) install_openflux update; break ;;
                     0) break ;;
-                    *) warn 'Введите 1, 2, 3, 4, 5 или 0.' ;;
+                    *) warn 'Введите 1, 2, 3, 4, 5, 6 или 0.' ;;
                 esac
             done ;;
         *) fail "Неизвестный параметр: $action. Справка: --help" ;;

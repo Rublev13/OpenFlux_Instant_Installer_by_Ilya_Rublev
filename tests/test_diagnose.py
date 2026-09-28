@@ -109,6 +109,23 @@ class Diagnostics(unittest.TestCase):
         self.safe(diagnose.log_report(self.root))
         self.safe(diagnose.runtime_report(self.root, {}))
 
+    def test_observation_does_not_accept_a_restart_loop(self):
+        state = {"ActiveState": "active", "SubState": "running", "MainPID": "321", "NRestarts": "0"}
+        _, message = diagnose.observe_service(lambda: dict(state), lambda _: None)
+        self.assertIn("без перезапусков", message)
+        for change in ({"MainPID": "322"}, {"NRestarts": "1"}, {"SubState": "auto-restart"}, {"MainPID": "0"}):
+            sequence = iter([dict(state)] + [dict(state, **change)] * 10)
+            _, message = diagnose.observe_service(lambda: next(sequence), lambda _: None)
+            self.assertIn("не подтверждена", message)
+
+    def test_explicit_exit_role_is_expected(self):
+        proc = self.root / "proc/321"
+        proc.mkdir(parents=True)
+        (proc / "cmdline").write_bytes(b"openflux\0--role=exit\0")
+        output = self.safe(diagnose.runtime_report(self.root, {"MainPID": "321"}))
+        self.assertIn("Явная роль выхода в CLI: да", output)
+        self.assertIn("Нестандартные параметры CLI могут перекрывать server.conf: нет", output)
+
     def test_volga_connection_and_last_start_failure(self):
         path = self.root / "var/log/openflux/openflux.log"
         path.parent.mkdir(parents=True)

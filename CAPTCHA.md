@@ -4,9 +4,11 @@
 
 [Telegram](https://t.me/Rublev_YouTube) · [YouTube](https://www.youtube.com/@Ilya_Rublev) · [Boosty](https://boosty.to/rublev13)
 
-Этот способ нужен, если **в свежем журнале VPS** есть `Failed to start transport: auth: yandex docs: captcha required`, а `NRestarts` растёт. Успешная капча на телефоне не подтверждает авторизацию VPS. Кратковременное `active/running` между перезапусками тоже не означает, что выход работает.
+Этот способ нужен, если **в свежем журнале VPS** есть `Failed to start transport: auth: yandex docs: captcha required`, а `NRestarts` растёт, либо установщик 1.3.0 остановил службу с сообщением о серверной капче. Успешная капча на телефоне не подтверждает авторизацию VPS. Кратковременное `active/running` между перезапусками тоже не означает, что выход работает.
 
-OpenFlux v0.1.0 (как и 0.0.5) умеет читать cookies из файла перед авторизацией. Утилита [openflux-import-cookies.py](openflux-import-cookies.py) записывает туда cookies, полученные после ручной проверки в браузере через IP VPS. Она не решает капчу, не устанавливает браузер на сервер и не меняет ключ шифрования. Поддерживаются оба транспорта установщика: `yandex` и `vyandex`.
+Закреплённое ядро OpenFlux node-v1.0.1 умеет читать cookies из файла перед авторизацией. Утилита [openflux-import-cookies.py](openflux-import-cookies.py) записывает туда cookies, полученные после ручной проверки в браузере через IP VPS. Она не решает капчу, не устанавливает браузер на сервер и не меняет ключ шифрования. Поддерживаются оба транспорта установщика: `yandex` и `vyandex`.
+
+Новые мобильные клиенты могут показать проверку для клиента и для выхода отдельно. Передача проверки выхода через туннель требует хотя бы одного уже работающего транспорта. Если единственный транспорт Яндекса на VPS ещё не авторизован, сообщение «капча пройдена» на телефоне не создаёт рабочий маршрут само по себе; используйте SSH-способ ниже. Установщик не добавляет открытый Direct-порт.
 
 ## 1. Остановите повторные запросы на VPS
 
@@ -109,7 +111,7 @@ systemctl start openflux.service
 
 ## Основания и пределы проверки
 
-- [CookieStore OpenFlux 0.0.5, формат не изменился в v0.1.0](https://github.com/p1neappleXpress/OpenFlux/blob/ea52949d45c0284c532cb8295abadced58b3a389/transport/cookiestore.go) хранит объект `ссылка документа → имя cookie → значение`; [main.go](https://github.com/p1neappleXpress/OpenFlux/blob/ea52949d45c0284c532cb8295abadced58b3a389/main.go) загружает его перед запуском транспорта.
+- [CookieStore OpenFlux node-v1.0.1](https://github.com/p1neappleXpress/OpenFlux/blob/8f9dc57987bd306b8d03f2a184b37feae0159e63/transport/cookiestore.go) хранит объект `ссылка документа → имя cookie → значение`; [main.go](https://github.com/p1neappleXpress/OpenFlux/blob/8f9dc57987bd306b8d03f2a184b37feae0159e63/main.go) загружает его перед запуском транспорта.
 - [Issue #106](https://github.com/p1neappleXpress/OpenFlux/issues/106) содержит пользовательский отчёт о переносе cookies браузера на сервер. Это не гарантия работы для каждого документа и IP.
 - [OpenSSH: `-D`](https://man.openbsd.org/ssh) — локальный SOCKS-прокси через SSH; [Edge: параметры прокси](https://learn.microsoft.com/en-us/deployedge/edge-learnmore-cmdline-options-proxy-settings) и [заголовки запросов](https://learn.microsoft.com/en-us/microsoft-edge/devtools/network/reference).
 

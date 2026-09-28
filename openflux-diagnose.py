@@ -15,12 +15,13 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 import zlib
 
 
 PINNED_HASHES = {
-    "fcc1db93e21a2d4f88e35ec642a54ce206fb9f611c4780b8d4857bbe2d58190a",
-    "c2bfd8bd38e73bb75b6640b54eb582abb375de2b43af61574d3913fd9d2403be",
+    "9fa157550d2c20c0bc03c12823b4ad0140ba070199b5548eacf98c5a2cca6cb8",
+    "325335fa416d2f87cba84c5a85d865c596169cd79c7f4cfc916cd67a88612886",
 }
 
 
@@ -135,11 +136,14 @@ def runtime_report(root, properties):
     session = (option(args, "--negotiate") not in (None, "false")
                or "--negotiate" in args or bool(option(args, "--transports")))
     out.append("Session в аргументах процесса: " + yes(session))
-    overrides = ("--role", "-r", "--mode", "-m", "--codec", "-c", "--transport", "-t", "--url", "-u")
-    out.append("Параметры CLI могут перекрывать server.conf: " + yes(any(option(args, flag) is not None for flag in overrides)))
+    role = option(args, "--role") or option(args, "-r")
+    out.append("Явная роль выхода в CLI: " + yes(role == "exit"))
+    overrides = ("--mode", "-m", "--codec", "-c", "--transport", "-t", "--url", "-u")
+    nonstandard = role not in (None, "exit") or any(option(args, flag) is not None for flag in overrides)
+    out.append("Нестандартные параметры CLI могут перекрывать server.conf: " + yes(nonstandard))
     actual = digest(proc / "exe")
     installed = digest(root / "usr/local/bin/openflux")
-    out.append("Работающий бинарник соответствует закреплённому OpenFlux v0.1.0: " + yes(actual in PINNED_HASHES))
+    out.append("Работающий бинарник соответствует закреплённому OpenFlux node-v1.0.1: " + yes(actual in PINNED_HASHES))
     out.append("Работающий бинарник совпадает с файлом на диске: " + yes(bool(actual) and actual == installed))
     out.append("Файлы конфигурации могли измениться после запуска; это не проверка настроек в памяти.")
     return out
@@ -196,6 +200,35 @@ def log_report(root):
     return out
 
 
+def service_properties():
+    try:
+        proc = subprocess.run(["systemctl", "show", "openflux.service", "--no-pager",
+                               "--property=ActiveState,SubState,MainPID,DropInPaths,NRestarts,ExecMainStatus"],
+                              capture_output=True, text=True, timeout=10)
+        if proc.returncode:
+            return {}
+        return dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+
+
+def observe_service(get=service_properties, pause=time.sleep):
+    first = get()
+    stable = True
+    last = first
+    for _ in range(10):
+        pause(2)
+        last = get()
+        stable = stable and all(last.get(k) == first.get(k) for k in ("MainPID", "NRestarts"))
+        stable = stable and last.get("ActiveState") == "active" and last.get("SubState") == "running"
+    stable = (stable and first.get("ActiveState") == "active" and first.get("SubState") == "running"
+              and bool(re.fullmatch(r"[1-9][0-9]{0,9}", first.get("MainPID", "")))
+              and bool(re.fullmatch(r"[0-9]+", first.get("NRestarts", ""))))
+    summary = ("Наблюдение 20 секунд: процесс работал без перезапусков; связь с клиентом ещё не проверена."
+               if stable else "Наблюдение 20 секунд: стабильная работа не подтверждена (остановка, перезапуск или нет данных).")
+    return last, summary
+
+
 def main():
     if os.geteuid() != 0:
         print("Запустите через sudo или от root. Диагностика ничего не устанавливает и не перезапускает.")
@@ -204,14 +237,9 @@ def main():
     print("https://t.me/Rublev_YouTube | https://boosty.to/rublev13 | https://www.youtube.com/@Ilya_Rublev")
     print("Только чтение. Ключ, документ, QR, cookies и исходные строки журнала не выводятся.")
     root = Path("/")
-    properties = {}
-    try:
-        proc = subprocess.run(["systemctl", "show", "openflux.service", "--no-pager",
-                               "--property=ActiveState,SubState,MainPID,DropInPaths,NRestarts,ExecMainStatus"],
-                              capture_output=True, text=True, timeout=10)
-        properties = dict(line.split("=", 1) for line in proc.stdout.splitlines() if "=" in line)
-    except (OSError, subprocess.SubprocessError):
-        print("systemd: сведения недоступны")
+    print("Наблюдаем состояние службы 20 секунд…")
+    properties, summary = observe_service()
+    print(summary)
     for group in (config_report(root), runtime_report(root, properties), log_report(root)):
         print()
         print("\n".join(group))

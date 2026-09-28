@@ -15,7 +15,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Получить исходный код
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -33,9 +33,11 @@ jobs:
         run: python3 tests/test_diagnose.py
       - name: Проверить импорт cookies, сохранение ключа и защиту файлов
         run: python3 tests/test_cookies.py
+      - name: Проверить установку, обновление, откат и полное удаление в изоляции
+        run: python3 -u tests/test_lifecycle.py
   android-qr:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 12
     steps:
       - name: Получить исходный код
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -45,8 +47,20 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends qrencode zbar-tools
-      - name: Прочитать реальные PNG и проверить их Android-декодером
+      - name: Проверить реальные PNG и импорт профиля официальных Android и Desktop
+        run: python3 tests/check_official_clients.py
+      - name: Проверить совместимость с альтернативным Android v1.1.1
         run: python3 tests/check_android_qr.py
+  core-pair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Проверить релизные бинарники и реальный зашифрованный L4-обмен на loopback
+        run: python3 -u tests/check_core_pair.py
   editors:
     name: Editor ${{ matrix.transport }}
     runs-on: ubuntu-latest
@@ -70,5 +84,5 @@ jobs:
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - name: Воспроизвести ошибку iOS и проверить исправленный Swift-код
+      - name: Регрессионная проверка старого iOS-импорта (не текущей TestFlight-сборки)
         run: python3 tests/check_ios_import.py
