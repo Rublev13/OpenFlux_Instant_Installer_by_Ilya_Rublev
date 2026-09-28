@@ -7,6 +7,8 @@ This does not test Yandex, mobile routing, or access from a real VPS.
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hashlib
+import ipaddress
+import json
 import os
 from pathlib import Path
 import re
@@ -50,13 +52,13 @@ def exact(sock, n):
     return result
 
 
-def request(socks_port, http_port):
+def request(socks_port, http_host, http_port):
     with socket.create_connection(("127.0.0.1", socks_port), timeout=5) as sock:
         sock.settimeout(8)
         sock.sendall(b"\x05\x01\x00")
         if exact(sock, 2) != b"\x05\x00":
             raise RuntimeError("SOCKS authentication failed")
-        sock.sendall(b"\x05\x01\x00\x01\x7f\x00\x00\x01" + struct.pack("!H", http_port))
+        sock.sendall(b"\x05\x01\x00\x01" + socket.inet_aton(http_host) + struct.pack("!H", http_port))
         reply = exact(sock, 4)
         if reply[1] != 0:
             raise RuntimeError("SOCKS destination rejected")
@@ -86,7 +88,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def exercise(root, server_bin, client_bin, http_port, explicit_role):
+def exercise(root, server_bin, client_bin, http_host, http_port, explicit_role):
     with tempfile.TemporaryDirectory(dir=root) as directory:
         work = Path(directory)
         key = work / "secret.txt"
@@ -113,7 +115,7 @@ def exercise(root, server_bin, client_bin, http_port, explicit_role):
                 if any(process.poll() is not None for process in processes):
                     raise RuntimeError("Core process terminated")
                 try:
-                    request(socks, http_port)
+                    request(socks, http_host, http_port)
                     break
                 except (OSError, RuntimeError):
                     if time.monotonic() > deadline:
@@ -153,12 +155,22 @@ def main():
         download(constant("OPENFLUX_VERSION"), "arm64", constant("LINUX_ARM64_SHA"), root / "arm64-not-executed")
         download(constant("CLI_VERSION"), "amd64", CLI_SHA, client)
         print("PASS: pinned node amd64/arm64 and CLI amd64 release checksums")
-        http = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        # gVisor rejects a 127/8 destination arriving from its virtual NIC.
+        # Use this runner's OWN interface address as the HTTP target instead.
+        # The Direct connection and SOCKS listener still bind only to loopback;
+        # the HTTP fixture is on a local ephemeral port, not an external site.
+        interfaces = json.loads(subprocess.check_output(["ip", "-j", "-4", "address", "show", "scope", "global"]))
+        local_ips = [info["local"] for interface in interfaces for info in interface.get("addr_info", [])
+                     if not ipaddress.ip_address(info["local"]).is_loopback]
+        if not local_ips:
+            raise RuntimeError("CI requires a non-loopback local IPv4 address for the HTTP fixture")
+        http_host = local_ips[0]
+        http = ThreadingHTTPServer((http_host, 0), Handler)
         worker = threading.Thread(target=http.serve_forever, daemon=True)
         worker.start()
         try:
-            exercise(root, server, client, http.server_port, True)
-            exercise(root, server, server, http.server_port, False)
+            exercise(root, server, client, http_host, http.server_port, True)
+            exercise(root, server, server, http_host, http.server_port, False)
         finally:
             http.shutdown()
             http.server_close()
